@@ -393,9 +393,6 @@ dialog h2 {
 }
 
 #preset-list {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
   margin-bottom: 14px;
 }
 
@@ -431,6 +428,112 @@ dialog h2 {
   touch-action: manipulation;
 }
 .dialog-cancel-btn:hover { background: var(--surface3); color: var(--text); }
+
+/* ── Melody track header accent ── */
+.track-header.melody-track .vol-bar {
+  background: rgba(80, 200, 120, 0.18);
+}
+.track-header.melody-track .track-header-name {
+  color: #7ae0a0;
+}
+
+/* ── Melody step cells ── */
+.mel-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.mel-cell.vel-0 { background: var(--cell-off); }
+.mel-cell.vel-1 { background: #0a3c20; }
+.mel-cell.vel-2 { background: #1a7040; }
+.mel-cell.vel-3 { background: #28a85c; }
+.mel-cell.vel-0:hover { background: var(--surface3); }
+.mel-cell.vel-1:hover, .mel-cell.vel-2:hover, .mel-cell.vel-3:hover { filter: brightness(1.2); }
+
+.note-label {
+  font-size: 7px;
+  color: rgba(255,255,255,0.85);
+  pointer-events: none;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ── Note picker popup ── */
+.note-picker {
+  position: fixed;
+  z-index: 200;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.7);
+  touch-action: none;
+  width: 236px;
+}
+
+.note-picker-vel-row {
+  display: flex;
+  gap: 3px;
+}
+
+.note-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.note-btn {
+  padding: 5px 2px;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 8px;
+  font-weight: bold;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: center;
+  touch-action: manipulation;
+  transition: background 0.08s;
+}
+.note-btn:hover { background: #2a5a3a; }
+.note-btn.note-c { color: #7ae0a0; }
+.note-btn.active { background: #28a85c; border-color: #50d080; color: #fff; }
+
+.note-off-btn {
+  width: 100%;
+  padding: 5px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 9px;
+  letter-spacing: 1px;
+  border-radius: 3px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.note-off-btn:hover { background: #502020; border-color: #804040; color: #ff8080; }
+
+/* ── Dialog preset sections ── */
+.preset-section { margin-bottom: 10px; }
+.preset-section-title {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 5px;
+}
+.preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }

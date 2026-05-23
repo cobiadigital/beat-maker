@@ -1,6 +1,6 @@
 'use strict';
 
-// ─── Noise buffer helper ────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 function createNoiseBuffer(ctx) {
   const bufSize = Math.floor(ctx.sampleRate * 0.5);
   const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
@@ -11,32 +11,55 @@ function createNoiseBuffer(ctx) {
   return src;
 }
 
+const _NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function noteToMidi(name) {
+  const m = name.match(/^([A-G]#?)(-?\d+)$/);
+  if (!m) return 60;
+  const pitch = _NOTE_NAMES.indexOf(m[1]);
+  return (parseInt(m[2]) + 1) * 12 + pitch;
+}
+function midiToNote(n) {
+  return `${_NOTE_NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
+}
+
 // ─── AudioEngine ────────────────────────────────────────────────────────────
 class AudioEngine {
   constructor() {
     this.ctx = null;
     this.masterGain = null;
     this.trackGains = {};
-    this.sequencer = null; // set externally for deferred gain wiring
+    this.sequencer = null;
   }
 
   init() {
     if (this.ctx) return;
-    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (typeof Tone !== 'undefined') {
+      Tone.start();
+      this.ctx = Tone.getContext().rawContext;
+    } else {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = 0.85;
     this.masterGain.connect(this.ctx.destination);
 
-    // Wire gain nodes for any tracks added before audio init
     if (this.sequencer) {
       for (const track of this.sequencer.tracks) {
         if (!this.trackGains[track.id]) this._createTrackGain(track);
+      }
+      if (this.sequencer.tone) {
+        for (const track of this.sequencer.tracks) {
+          if (track.type === 'melody' && !this.sequencer.tone.synths[track.id]) {
+            this.sequencer.tone.createSynth(track, this.trackGains[track.id]);
+          }
+        }
       }
     }
   }
 
   resume() {
-    if (this.ctx && this.ctx.state === 'suspended') return this.ctx.resume();
+    if (typeof Tone !== 'undefined') Tone.start();
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
   }
 
   _createTrackGain(track) {
@@ -46,17 +69,14 @@ class AudioEngine {
     this.trackGains[track.id] = g;
   }
 
-  // velocity: 1, 2, or 3 → normalised gain 0.33, 0.67, 1.0
   _vel(v) { return v / 3; }
 
   trigger(instrument, time, velocity, trackId) {
     const fn = this[`_synth_${instrument}`];
     if (!fn) return;
-    const dest = this.trackGains[trackId] || this.masterGain;
-    fn.call(this, time, velocity, dest);
+    fn.call(this, time, velocity, this.trackGains[trackId] || this.masterGain);
   }
 
-  // ── Kick ─────────────────────────────────────────────────────────────────
   _synth_kick(time, vel, dest) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
@@ -69,11 +89,9 @@ class AudioEngine {
     osc.start(time); osc.stop(time + 0.5);
   }
 
-  // ── Snare ─────────────────────────────────────────────────────────────────
   _synth_snare(time, vel, dest) {
     const ctx = this.ctx;
     const gain = this._vel(vel);
-
     const bodyOsc = ctx.createOscillator();
     const bodyEnv = ctx.createGain();
     bodyOsc.frequency.value = 185;
@@ -81,7 +99,6 @@ class AudioEngine {
     bodyEnv.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
     bodyOsc.connect(bodyEnv); bodyEnv.connect(dest);
     bodyOsc.start(time); bodyOsc.stop(time + 0.15);
-
     const noise = createNoiseBuffer(ctx);
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass'; hp.frequency.value = 1000;
@@ -92,7 +109,6 @@ class AudioEngine {
     noise.start(time); noise.stop(time + 0.2);
   }
 
-  // ── Closed Hi-Hat ─────────────────────────────────────────────────────────
   _synth_hihat_c(time, vel, dest) {
     const ctx = this.ctx;
     const noise = createNoiseBuffer(ctx);
@@ -105,7 +121,6 @@ class AudioEngine {
     noise.start(time); noise.stop(time + 0.04);
   }
 
-  // ── Open Hi-Hat ───────────────────────────────────────────────────────────
   _synth_hihat_o(time, vel, dest) {
     const ctx = this.ctx;
     const noise = createNoiseBuffer(ctx);
@@ -118,7 +133,6 @@ class AudioEngine {
     noise.start(time); noise.stop(time + 0.4);
   }
 
-  // ── Clap ──────────────────────────────────────────────────────────────────
   _synth_clap(time, vel, dest) {
     const ctx = this.ctx;
     const gain = this._vel(vel);
@@ -135,7 +149,6 @@ class AudioEngine {
     });
   }
 
-  // ── High Tom ──────────────────────────────────────────────────────────────
   _synth_tom_hi(time, vel, dest) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
@@ -148,7 +161,6 @@ class AudioEngine {
     osc.start(time); osc.stop(time + 0.3);
   }
 
-  // ── Low Tom ───────────────────────────────────────────────────────────────
   _synth_tom_lo(time, vel, dest) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
@@ -161,11 +173,9 @@ class AudioEngine {
     osc.start(time); osc.stop(time + 0.45);
   }
 
-  // ── Rimshot ───────────────────────────────────────────────────────────────
   _synth_rimshot(time, vel, dest) {
     const ctx = this.ctx;
     const gain = this._vel(vel);
-
     const click = ctx.createOscillator();
     const clickEnv = ctx.createGain();
     click.frequency.value = 800;
@@ -173,7 +183,6 @@ class AudioEngine {
     clickEnv.gain.exponentialRampToValueAtTime(0.001, time + 0.025);
     click.connect(clickEnv); clickEnv.connect(dest);
     click.start(time); click.stop(time + 0.025);
-
     const noise = createNoiseBuffer(ctx);
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass'; hp.frequency.value = 2000;
@@ -184,24 +193,19 @@ class AudioEngine {
     noise.start(time); noise.stop(time + 0.04);
   }
 
-  // ── Cowbell ───────────────────────────────────────────────────────────────
   _synth_cowbell(time, vel, dest) {
     const ctx = this.ctx;
     const gain = this._vel(vel) * 0.25;
-
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
     osc1.type = osc2.type = 'square';
     osc1.frequency.value = 562;
     osc2.frequency.value = 845;
-
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass'; bp.frequency.value = 700; bp.Q.value = 1;
-
     const env = ctx.createGain();
     env.gain.setValueAtTime(gain, time);
     env.gain.exponentialRampToValueAtTime(0.001, time + 0.5);
-
     osc1.connect(bp); osc2.connect(bp);
     bp.connect(env); env.connect(dest);
     osc1.start(time); osc2.start(time);
@@ -209,44 +213,109 @@ class AudioEngine {
   }
 }
 
+// ─── ToneEngine ─────────────────────────────────────────────────────────────
+class ToneEngine {
+  constructor() {
+    this.synths = {};
+  }
+
+  createSynth(track, gainNode) {
+    if (typeof Tone === 'undefined' || this.synths[track.id]) return;
+    const synth = this._build(track.instrument);
+    synth.connect(gainNode);
+    this.synths[track.id] = synth;
+  }
+
+  _build(instrument) {
+    let synth;
+    switch (instrument) {
+      case 'synth_fm':
+        synth = new Tone.PolySynth(Tone.FMSynth);
+        synth.set({
+          harmonicity: 3, modulationIndex: 10,
+          envelope: { attack: 0.01, decay: 0.1, sustain: 0.4, release: 0.6 },
+          modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.3, release: 0.5 },
+        });
+        break;
+      case 'synth_am':
+        synth = new Tone.PolySynth(Tone.AMSynth);
+        synth.set({
+          harmonicity: 2,
+          envelope: { attack: 0.01, decay: 0.12, sustain: 0.5, release: 0.6 },
+        });
+        break;
+      case 'synth_mono':
+        synth = new Tone.MonoSynth();
+        synth.set({
+          oscillator: { type: 'sawtooth' },
+          filter: { Q: 6, type: 'lowpass', rolloff: -24 },
+          envelope: { attack: 0.005, decay: 0.15, sustain: 0.6, release: 0.4 },
+          filterEnvelope: { attack: 0.01, decay: 0.3, sustain: 0.4, release: 0.5,
+            baseFrequency: 200, octaves: 3 },
+        });
+        break;
+      default: // synth_poly
+        synth = new Tone.PolySynth(Tone.Synth);
+        synth.set({
+          oscillator: { type: 'triangle' },
+          envelope: { attack: 0.01, decay: 0.1, sustain: 0.5, release: 0.6 },
+        });
+    }
+    return synth;
+  }
+
+  trigger(trackId, note, time, velocity, stepDuration) {
+    const synth = this.synths[trackId];
+    if (!synth) return;
+    try {
+      synth.triggerAttackRelease(note, Math.max(0.05, stepDuration * 0.8), time,
+        Math.max(0.01, velocity / 3));
+    } catch (e) { /* ignore scheduling errors on note change */ }
+  }
+
+  disposeSynth(trackId) {
+    const s = this.synths[trackId];
+    if (s) { try { s.dispose(); } catch (e) {} delete this.synths[trackId]; }
+  }
+}
+
 // ─── Sequencer ──────────────────────────────────────────────────────────────
 class Sequencer {
-  constructor(audioEngine) {
+  constructor(audioEngine, toneEngine) {
     this.audio = audioEngine;
+    this.tone = toneEngine;
     this.bpm = 120;
     this.swing = 0;
     this.beatsPerMeasure = 4;
     this.totalSteps = 16;
     this.tracks = [];
-
     this.isPlaying = false;
     this.currentStep = 0;
     this.nextStepTime = 0;
-    this._schedulerTimer = null;
-
-    this.onStepChange = null; // UI callback
+    this._worker = null;
+    this.onStepChange = null;
   }
 
-  getStepDuration() {
-    return (60 / this.bpm) / 4; // one 16th note in seconds
-  }
+  getStepDuration() { return (60 / this.bpm) / 4; }
 
   getSwingOffset(stepIndex) {
     if (stepIndex % 2 === 1) return this.swing * (this.getStepDuration() / 2);
     return 0;
   }
 
-  addTrackOffline(instrument, label) {
+  addTrackOffline(instrument, label, type = 'drum') {
     const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const track = { id, instrument, label, volume: 0.5, muted: false,
+    const track = { id, type, instrument, label, volume: 0.5, muted: false,
                     steps: new Int8Array(this.totalSteps) };
+    if (type === 'melody') track.noteSteps = new Array(this.totalSteps).fill(null);
     this.tracks.push(track);
     return track;
   }
 
-  addTrack(instrument, label) {
-    const track = this.addTrackOffline(instrument, label);
+  addTrack(instrument, label, type = 'drum') {
+    const track = this.addTrackOffline(instrument, label, type);
     this.audio._createTrackGain(track);
+    if (type === 'melody') this.tone.createSynth(track, this.audio.trackGains[track.id]);
     return track;
   }
 
@@ -254,6 +323,7 @@ class Sequencer {
     this.tracks = this.tracks.filter(t => t.id !== trackId);
     const g = this.audio.trackGains[trackId];
     if (g) { g.disconnect(); delete this.audio.trackGains[trackId]; }
+    this.tone.disposeSynth(trackId);
   }
 
   setTotalSteps(n) {
@@ -262,6 +332,12 @@ class Sequencer {
       const next = new Int8Array(n);
       next.set(track.steps.slice(0, n));
       track.steps = next;
+      if (track.type === 'melody') {
+        const nn = new Array(n).fill(null);
+        const prev = track.noteSteps || [];
+        for (let i = 0; i < Math.min(n, prev.length); i++) nn[i] = prev[i];
+        track.noteSteps = nn;
+      }
     }
   }
 
@@ -275,15 +351,15 @@ class Sequencer {
   start() {
     this.audio.init();
     this.audio.resume();
-
     for (const track of this.tracks) {
       if (!this.audio.trackGains[track.id]) this.audio._createTrackGain(track);
+      if (track.type === 'melody' && !this.tone.synths[track.id]) {
+        this.tone.createSynth(track, this.audio.trackGains[track.id]);
+      }
     }
-
     this.isPlaying = true;
     this.currentStep = 0;
     this.nextStepTime = this.audio.ctx.currentTime + 0.05;
-
     if (!this._worker) this._worker = this._makeWorker();
     this._worker.postMessage('start');
   }
@@ -297,7 +373,6 @@ class Sequencer {
   _schedule() {
     const ctx = this.audio.ctx;
     const lookahead = ctx.currentTime + 0.1;
-
     while (this.nextStepTime < lookahead) {
       this._scheduleStep(this.currentStep, this.nextStepTime);
       this.nextStepTime += this.getStepDuration();
@@ -307,11 +382,17 @@ class Sequencer {
 
   _scheduleStep(stepIndex, time) {
     const scheduledTime = time + this.getSwingOffset(stepIndex);
+    const stepDuration = this.getStepDuration();
 
     for (const track of this.tracks) {
       const vel = track.steps[stepIndex];
       if (vel > 0 && !track.muted) {
-        this.audio.trigger(track.instrument, scheduledTime, vel, track.id);
+        if (track.type === 'melody') {
+          const note = track.noteSteps ? track.noteSteps[stepIndex] : null;
+          if (note) this.tone.trigger(track.id, note, scheduledTime, vel, stepDuration);
+        } else {
+          this.audio.trigger(track.instrument, scheduledTime, vel, track.id);
+        }
       }
     }
 
@@ -322,19 +403,33 @@ class Sequencer {
   }
 }
 
-// ─── UI ─────────────────────────────────────────────────────────────────────
-const PRESETS = [
-  { instrument: 'kick',    label: '808 Kick'       },
-  { instrument: 'snare',   label: '808 Snare'      },
-  { instrument: 'hihat_c', label: 'Closed Hat'     },
-  { instrument: 'hihat_o', label: 'Open Hat'       },
-  { instrument: 'clap',    label: '808 Clap'       },
-  { instrument: 'tom_hi',  label: 'High Tom'       },
-  { instrument: 'tom_lo',  label: 'Low Tom'        },
-  { instrument: 'rimshot', label: 'Rimshot'        },
-  { instrument: 'cowbell', label: 'Cowbell'        },
+// ─── Constants ───────────────────────────────────────────────────────────────
+const MELODY_NOTES = [
+  'C3','D3','E3','F3','G3','A3','B3',
+  'C4','D4','E4','F4','G4','A4','B4',
+  'C5','D5','E5',
 ];
 
+const DRUM_PRESETS = [
+  { instrument: 'kick',    label: '808 Kick'   },
+  { instrument: 'snare',   label: '808 Snare'  },
+  { instrument: 'hihat_c', label: 'Closed Hat' },
+  { instrument: 'hihat_o', label: 'Open Hat'   },
+  { instrument: 'clap',    label: '808 Clap'   },
+  { instrument: 'tom_hi',  label: 'High Tom'   },
+  { instrument: 'tom_lo',  label: 'Low Tom'    },
+  { instrument: 'rimshot', label: 'Rimshot'    },
+  { instrument: 'cowbell', label: 'Cowbell'    },
+];
+
+const MELODY_PRESETS = [
+  { instrument: 'synth_poly', label: 'Poly Synth', type: 'melody' },
+  { instrument: 'synth_fm',   label: 'FM Synth',   type: 'melody' },
+  { instrument: 'synth_am',   label: 'AM Synth',   type: 'melody' },
+  { instrument: 'synth_mono', label: 'Mono Bass',  type: 'melody' },
+];
+
+// ─── UI ─────────────────────────────────────────────────────────────────────
 class UI {
   constructor(seq) {
     this.seq = seq;
@@ -354,23 +449,21 @@ class UI {
   _initDefaultKit() {
     this._initSequencerDOM();
     const defaults = [
-      { instrument: 'kick',    label: '808 Kick'  },
-      { instrument: 'snare',   label: '808 Snare' },
-      { instrument: 'hihat_c', label: 'Closed Hat'},
-      { instrument: 'hihat_o', label: 'Open Hat'  },
-      { instrument: 'clap',    label: '808 Clap'  },
+      { instrument: 'kick',    label: '808 Kick'   },
+      { instrument: 'snare',   label: '808 Snare'  },
+      { instrument: 'hihat_c', label: 'Closed Hat' },
+      { instrument: 'hihat_o', label: 'Open Hat'   },
+      { instrument: 'clap',    label: '808 Clap'   },
     ];
     for (const d of defaults) {
-      const track = this.seq.addTrackOffline(d.instrument, d.label);
+      const track = this.seq.addTrackOffline(d.instrument, d.label, 'drum');
       this._renderTrack(track);
     }
   }
 
-  // Build the sticky header row + one step-row per step
   _initSequencerDOM() {
     const container = document.getElementById('track-list');
     container.innerHTML = '';
-
     const headerRow = document.createElement('div');
     headerRow.id = 'seq-header-row';
     headerRow.className = 'seq-row header-row';
@@ -378,7 +471,6 @@ class UI {
     corner.className = 'step-label corner';
     headerRow.appendChild(corner);
     container.appendChild(headerRow);
-
     for (let i = 0; i < this.seq.totalSteps; i++) {
       container.appendChild(this._makeStepRow(i));
     }
@@ -396,13 +488,11 @@ class UI {
     return row;
   }
 
-  // Add a column: header cell + one step-cell per existing step-row
   _renderTrack(track) {
     const header = document.createElement('div');
-    header.className = 'track-header';
+    header.className = `track-header${track.type === 'melody' ? ' melody-track' : ''}`;
     header.dataset.trackId = track.id;
 
-    // Volume fill bar (visual only — controlled by drag)
     const volBar = document.createElement('div');
     volBar.className = 'vol-bar';
     volBar.style.height = `${Math.round(track.volume * 100)}%`;
@@ -434,7 +524,6 @@ class UI {
       document.querySelectorAll(`.step-cell[data-track-id="${track.id}"]`).forEach(el => el.remove());
     });
 
-    // Drag = volume, tap = open instrument picker for this track
     let dragStartY, dragStartVol, hasDragged;
     header.addEventListener('pointerdown', e => {
       dragStartY = undefined;
@@ -447,7 +536,7 @@ class UI {
     });
     header.addEventListener('pointermove', e => {
       if (dragStartY === undefined) return;
-      const dy = dragStartY - e.clientY; // up = louder
+      const dy = dragStartY - e.clientY;
       if (Math.abs(dy) > 5 || hasDragged) {
         hasDragged = true;
         track.volume = Math.max(0, Math.min(1, dragStartVol + dy / 120));
@@ -456,7 +545,7 @@ class UI {
         volBar.style.height = `${Math.round(track.volume * 100)}%`;
       }
     });
-    header.addEventListener('pointerup', e => {
+    header.addEventListener('pointerup', () => {
       if (!hasDragged && dragStartY !== undefined) this._openForEdit(track, name);
       dragStartY = undefined;
     });
@@ -469,7 +558,6 @@ class UI {
     header.appendChild(btns);
     document.getElementById('seq-header-row').appendChild(header);
 
-    // Add one cell per step row
     document.querySelectorAll('.step-row').forEach(row => {
       const stepIdx = parseInt(row.dataset.step);
       if (isNaN(stepIdx)) return;
@@ -478,16 +566,19 @@ class UI {
   }
 
   _makeCell(track, stepIdx) {
+    return track.type === 'melody'
+      ? this._makeMelodyCell(track, stepIdx)
+      : this._makeDrumCell(track, stepIdx);
+  }
+
+  _makeDrumCell(track, stepIdx) {
     const cell = document.createElement('div');
     cell.className = `step-cell vel-${track.steps[stepIdx]}`;
     cell.dataset.trackId = track.id;
     cell.dataset.step = stepIdx;
 
-    let holdTimer = null;
-    let startX, startY;
-
+    let holdTimer = null, startX, startY;
     cell.addEventListener('contextmenu', e => e.preventDefault());
-
     cell.addEventListener('pointerdown', e => {
       startX = e.clientX; startY = e.clientY;
       holdTimer = setTimeout(() => {
@@ -495,30 +586,74 @@ class UI {
         this._showVelPicker(cell, track, stepIdx);
       }, 380);
     });
-
     cell.addEventListener('pointermove', e => {
       if (holdTimer && (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8)) {
         clearTimeout(holdTimer); holdTimer = null;
       }
     });
-
     cell.addEventListener('pointerup', () => {
       if (holdTimer) {
         clearTimeout(holdTimer); holdTimer = null;
-        // Tap: toggle off ↔ on at full velocity
         track.steps[stepIdx] = track.steps[stepIdx] > 0 ? 0 : 3;
         cell.className = `step-cell vel-${track.steps[stepIdx]}`;
       }
     });
-
     cell.addEventListener('pointercancel', () => { clearTimeout(holdTimer); holdTimer = null; });
-
     return cell;
   }
 
+  _makeMelodyCell(track, stepIdx) {
+    const cell = document.createElement('div');
+    const vel = track.steps[stepIdx];
+    cell.className = `step-cell mel-cell vel-${vel}`;
+    cell.dataset.trackId = track.id;
+    cell.dataset.step = stepIdx;
+
+    const noteLabel = document.createElement('span');
+    noteLabel.className = 'note-label';
+    const existingNote = (track.noteSteps || [])[stepIdx];
+    if (existingNote) noteLabel.textContent = existingNote;
+    cell.appendChild(noteLabel);
+
+    let holdTimer = null, startX, startY;
+    cell.addEventListener('contextmenu', e => e.preventDefault());
+    cell.addEventListener('pointerdown', e => {
+      startX = e.clientX; startY = e.clientY;
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        this._showNotePicker(cell, track, stepIdx);
+      }, 380);
+    });
+    cell.addEventListener('pointermove', e => {
+      if (holdTimer && (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8)) {
+        clearTimeout(holdTimer); holdTimer = null;
+      }
+    });
+    cell.addEventListener('pointerup', () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer); holdTimer = null;
+        const on = track.steps[stepIdx] > 0;
+        if (on) {
+          track.steps[stepIdx] = 0;
+          if (track.noteSteps) track.noteSteps[stepIdx] = null;
+          cell.className = 'step-cell mel-cell vel-0';
+          noteLabel.textContent = '';
+        } else {
+          track.steps[stepIdx] = 3;
+          if (track.noteSteps) track.noteSteps[stepIdx] = 'C4';
+          cell.className = 'step-cell mel-cell vel-3';
+          noteLabel.textContent = 'C4';
+          this._showNotePicker(cell, track, stepIdx);
+        }
+      }
+    });
+    cell.addEventListener('pointercancel', () => { clearTimeout(holdTimer); holdTimer = null; });
+    return cell;
+  }
+
+  // ── Velocity picker (drums) ────────────────────────────────────────────────
   _showVelPicker(cell, track, stepIdx) {
     this._closeVelPicker();
-
     const picker = document.createElement('div');
     picker.id = 'vel-picker';
     picker.className = 'vel-picker';
@@ -538,14 +673,12 @@ class UI {
     });
 
     const rect = cell.getBoundingClientRect();
-    const pw = 150, ph = 40;
-    let left = rect.left + rect.width / 2 - pw / 2;
-    let top  = rect.top - ph - 8;
-    left = Math.max(4, Math.min(left, window.innerWidth - pw - 4));
+    let left = rect.left + rect.width / 2 - 75;
+    let top  = rect.top - 48;
+    left = Math.max(4, Math.min(left, window.innerWidth - 154));
     if (top < 4) top = rect.bottom + 6;
     picker.style.left = `${left}px`;
     picker.style.top  = `${top}px`;
-
     document.body.appendChild(picker);
 
     const onOutside = e => { if (!picker.contains(e.target)) this._closeVelPicker(); };
@@ -558,21 +691,117 @@ class UI {
     if (p) { if (p._outside) document.removeEventListener('pointerdown', p._outside); p.remove(); }
   }
 
+  // ── Note picker (melody) ───────────────────────────────────────────────────
+  _showNotePicker(cell, track, stepIdx) {
+    this._closeNotePicker();
+    this._closeVelPicker();
+
+    const picker = document.createElement('div');
+    picker.id = 'note-picker';
+    picker.className = 'note-picker';
+
+    // Velocity row
+    const velRow = document.createElement('div');
+    velRow.className = 'note-picker-vel-row';
+    [{ v: 1, label: 'pp' }, { v: 2, label: 'mf' }, { v: 3, label: 'ff' }].forEach(({ v, label }) => {
+      const btn = document.createElement('button');
+      btn.className = `vel-opt vel-opt-${v}`;
+      if (track.steps[stepIdx] === v) btn.classList.add('active');
+      btn.textContent = label;
+      btn.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        track.steps[stepIdx] = v;
+        cell.className = `step-cell mel-cell vel-${v}`;
+        cell.appendChild(cell.querySelector('.note-label'));
+        velRow.querySelectorAll('.vel-opt').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+      velRow.appendChild(btn);
+    });
+    picker.appendChild(velRow);
+
+    // Note grid
+    const noteGrid = document.createElement('div');
+    noteGrid.className = 'note-grid';
+    const currentNote = (track.noteSteps || [])[stepIdx];
+    MELODY_NOTES.forEach(note => {
+      const btn = document.createElement('button');
+      btn.className = 'note-btn';
+      if (note === currentNote) btn.classList.add('active');
+      if (note.startsWith('C')) btn.classList.add('note-c');
+      btn.textContent = note;
+      btn.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        if (track.noteSteps) track.noteSteps[stepIdx] = note;
+        if (track.steps[stepIdx] === 0) track.steps[stepIdx] = 3;
+        cell.className = `step-cell mel-cell vel-${track.steps[stepIdx]}`;
+        const lbl = cell.querySelector('.note-label');
+        if (lbl) { lbl.textContent = note; cell.appendChild(lbl); }
+        noteGrid.querySelectorAll('.note-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+      noteGrid.appendChild(btn);
+    });
+    picker.appendChild(noteGrid);
+
+    // Off button
+    const offBtn = document.createElement('button');
+    offBtn.className = 'note-off-btn';
+    offBtn.textContent = 'OFF';
+    offBtn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      track.steps[stepIdx] = 0;
+      if (track.noteSteps) track.noteSteps[stepIdx] = null;
+      cell.className = 'step-cell mel-cell vel-0';
+      const lbl = cell.querySelector('.note-label');
+      if (lbl) lbl.textContent = '';
+      this._closeNotePicker();
+    });
+    picker.appendChild(offBtn);
+
+    // Position
+    const rect = cell.getBoundingClientRect();
+    const pw = 236;
+    let left = rect.left + rect.width / 2 - pw / 2;
+    let top  = rect.top - 10 - picker.offsetHeight;
+    left = Math.max(4, Math.min(left, window.innerWidth - pw - 4));
+    // Position after append so we know the height
+    picker.style.left = `${left}px`;
+    picker.style.top  = `${rect.top - 195}px`;
+    document.body.appendChild(picker);
+
+    // Reposition after render
+    requestAnimationFrame(() => {
+      const ph = picker.offsetHeight;
+      let t = rect.top - ph - 8;
+      if (t < 4) t = rect.bottom + 6;
+      t = Math.max(4, Math.min(t, window.innerHeight - ph - 4));
+      picker.style.top = `${t}px`;
+    });
+
+    const onOutside = e => { if (!picker.contains(e.target)) this._closeNotePicker(); };
+    setTimeout(() => document.addEventListener('pointerdown', onOutside, { once: true }), 50);
+    picker._outside = onOutside;
+  }
+
+  _closeNotePicker() {
+    const p = document.getElementById('note-picker');
+    if (p) { if (p._outside) document.removeEventListener('pointerdown', p._outside); p.remove(); }
+  }
+
+  // ── Grid management ────────────────────────────────────────────────────────
   _rebuildGrids() {
     document.querySelectorAll('.step-row').forEach(r => r.remove());
-
     const container = document.getElementById('track-list');
     for (let i = 0; i < this.seq.totalSteps; i++) {
       container.appendChild(this._makeStepRow(i));
     }
-
     for (const track of this.seq.tracks) {
       document.querySelectorAll('.step-row').forEach(row => {
         const stepIdx = parseInt(row.dataset.step);
-        row.appendChild(this._makeCell(track, stepIdx));
+        if (!isNaN(stepIdx)) row.appendChild(this._makeCell(track, stepIdx));
       });
     }
-
     this.activeStep = -1;
   }
 
@@ -586,9 +815,9 @@ class UI {
     this.activeStep = step;
   }
 
+  // ── Transport ──────────────────────────────────────────────────────────────
   _bindTransport() {
     const playBtn = document.getElementById('play-stop');
-
     playBtn.addEventListener('click', () => {
       if (this.seq.isPlaying) {
         this.seq.stop();
@@ -607,8 +836,8 @@ class UI {
     });
 
     const bpmRange = document.getElementById('bpm');
-    const bpmNum = document.getElementById('bpm-num');
-    const syncBpm = val => {
+    const bpmNum   = document.getElementById('bpm-num');
+    const syncBpm  = val => {
       const v = Math.min(200, Math.max(60, parseInt(val) || 120));
       this.seq.bpm = v;
       bpmRange.value = v;
@@ -618,7 +847,7 @@ class UI {
     bpmNum.addEventListener('change', e => syncBpm(e.target.value));
 
     const swingRange = document.getElementById('swing');
-    const swingVal = document.getElementById('swing-val');
+    const swingVal   = document.getElementById('swing-val');
     swingRange.addEventListener('input', e => {
       this.seq.swing = parseInt(e.target.value) / 100;
       swingVal.textContent = `${e.target.value}%`;
@@ -636,11 +865,12 @@ class UI {
     });
   }
 
+  // ── Dialog ─────────────────────────────────────────────────────────────────
   _buildDialog() {
     const dialog = document.getElementById('instrument-dialog');
-    const title = dialog.querySelector('h2');
-    const list = document.getElementById('preset-list');
-    let editTarget = null; // track object when swapping, null when adding
+    const title  = dialog.querySelector('h2');
+    const list   = document.getElementById('preset-list');
+    let editTarget = null;
 
     this._openForAdd = () => {
       editTarget = null;
@@ -655,24 +885,72 @@ class UI {
 
     const closeDialog = () => { editTarget = null; dialog.close(); };
 
-    PRESETS.forEach(preset => {
-      const btn = document.createElement('button');
-      btn.className = 'preset-btn';
-      btn.textContent = preset.label;
-      btn.addEventListener('click', () => {
-        if (editTarget) {
-          editTarget.track.instrument = preset.instrument;
-          editTarget.track.label = preset.label;
-          editTarget.nameEl.textContent = preset.label;
-          editTarget.nameEl.title = preset.label;
-        } else {
-          const track = this.seq.addTrack(preset.instrument, preset.label);
-          this._renderTrack(track);
-        }
-        closeDialog();
+    const makeSection = (sectionTitle, presets) => {
+      const section = document.createElement('div');
+      section.className = 'preset-section';
+      const heading = document.createElement('div');
+      heading.className = 'preset-section-title';
+      heading.textContent = sectionTitle;
+      section.appendChild(heading);
+      const grid = document.createElement('div');
+      grid.className = 'preset-grid';
+      presets.forEach(preset => {
+        const btn = document.createElement('button');
+        btn.className = 'preset-btn';
+        btn.textContent = preset.label;
+        btn.addEventListener('click', () => {
+          const newType = preset.type || 'drum';
+          if (editTarget) {
+            const { track, nameEl } = editTarget;
+            // Handle type change
+            if (track.type === 'melody' && newType !== 'melody') {
+              this.seq.tone.disposeSynth(track.id);
+              delete track.noteSteps;
+              track.type = 'drum';
+              document.querySelectorAll(`.step-cell[data-track-id="${track.id}"]`).forEach(el => el.remove());
+              document.querySelectorAll('.step-row').forEach(row => {
+                const si = parseInt(row.dataset.step);
+                if (!isNaN(si)) row.appendChild(this._makeDrumCell(track, si));
+              });
+              const hdr = document.querySelector(`.track-header[data-track-id="${track.id}"]`);
+              if (hdr) hdr.classList.remove('melody-track');
+            } else if (track.type !== 'melody' && newType === 'melody') {
+              track.type = 'melody';
+              track.noteSteps = new Array(this.seq.totalSteps).fill(null);
+              const g = this.seq.audio.trackGains[track.id];
+              if (g) this.seq.tone.createSynth({ ...track, instrument: preset.instrument }, g);
+              document.querySelectorAll(`.step-cell[data-track-id="${track.id}"]`).forEach(el => el.remove());
+              document.querySelectorAll('.step-row').forEach(row => {
+                const si = parseInt(row.dataset.step);
+                if (!isNaN(si)) row.appendChild(this._makeMelodyCell(track, si));
+              });
+              const hdr = document.querySelector(`.track-header[data-track-id="${track.id}"]`);
+              if (hdr) hdr.classList.add('melody-track');
+            } else if (track.type === 'melody') {
+              // melody → melody swap
+              this.seq.tone.disposeSynth(track.id);
+              track.instrument = preset.instrument;
+              const g = this.seq.audio.trackGains[track.id];
+              if (g) this.seq.tone.createSynth(track, g);
+            }
+            track.instrument = preset.instrument;
+            track.label = preset.label;
+            nameEl.textContent = preset.label;
+            nameEl.title = preset.label;
+          } else {
+            const track = this.seq.addTrack(preset.instrument, preset.label, newType);
+            this._renderTrack(track);
+          }
+          closeDialog();
+        });
+        grid.appendChild(btn);
       });
-      list.appendChild(btn);
-    });
+      section.appendChild(grid);
+      list.appendChild(section);
+    };
+
+    makeSection('DRUMS', DRUM_PRESETS);
+    makeSection('MELODY SYNTHS', MELODY_PRESETS);
 
     document.getElementById('dialog-cancel').addEventListener('click', closeDialog);
     dialog.addEventListener('click', e => { if (e.target === dialog) closeDialog(); });
@@ -680,7 +958,6 @@ class UI {
 }
 
 // ─── MIDI ────────────────────────────────────────────────────────────────────
-
 const DRUM_NOTE = {
   kick: 36, snare: 38, hihat_c: 42, hihat_o: 46,
   clap: 39, tom_hi: 50, tom_lo: 45, rimshot: 37, cowbell: 56,
@@ -688,7 +965,6 @@ const DRUM_NOTE = {
 const NOTE_TO_INSTRUMENT = Object.fromEntries(
   Object.entries(DRUM_NOTE).map(([k, v]) => [v, k])
 );
-// Extra GM aliases → our instruments
 Object.assign(NOTE_TO_INSTRUMENT, {
   35: 'kick', 40: 'snare', 44: 'hihat_c', 48: 'tom_hi',
   41: 'tom_lo', 43: 'tom_lo', 47: 'tom_lo',
@@ -704,26 +980,45 @@ function vlq(value) {
 
 function exportMidi(seq) {
   const PPQ = 96;
-  const ticksPerStep = PPQ / 4; // 16th note = 24 ticks
+  const ticksPerStep = PPQ / 4;
   const uspb = Math.round(60_000_000 / seq.bpm);
 
   const events = [];
+  let melCh = 0;
+
   for (const track of seq.tracks) {
-    const note = DRUM_NOTE[track.instrument];
-    if (!note) continue;
-    for (let s = 0; s < seq.totalSteps; s++) {
-      const vel = track.steps[s];
-      if (!vel) continue;
-      const midiVel = vel === 1 ? 55 : vel === 2 ? 82 : 110;
-      const tick = s * ticksPerStep;
-      events.push({ tick, status: 0x99, note, vel: midiVel });
-      events.push({ tick: tick + ticksPerStep - 1, status: 0x89, note, vel: 0 });
+    if (track.type === 'melody') {
+      // Skip channel 9 (reserved for drums in General MIDI)
+      if (melCh === 9) melCh++;
+      const ch = melCh & 0x0F;
+      for (let s = 0; s < seq.totalSteps; s++) {
+        const vel = track.steps[s];
+        const note = (track.noteSteps || [])[s];
+        if (!vel || !note) continue;
+        const midiVel = vel === 1 ? 55 : vel === 2 ? 82 : 110;
+        const midiNote = Math.max(0, Math.min(127, noteToMidi(note)));
+        const tick = s * ticksPerStep;
+        events.push({ tick, status: 0x90 | ch, note: midiNote, vel: midiVel });
+        events.push({ tick: tick + ticksPerStep - 1, status: 0x80 | ch, note: midiNote, vel: 0 });
+      }
+      melCh++;
+    } else {
+      const note = DRUM_NOTE[track.instrument];
+      if (!note) continue;
+      for (let s = 0; s < seq.totalSteps; s++) {
+        const vel = track.steps[s];
+        if (!vel) continue;
+        const midiVel = vel === 1 ? 55 : vel === 2 ? 82 : 110;
+        const tick = s * ticksPerStep;
+        events.push({ tick, status: 0x99, note, vel: midiVel });
+        events.push({ tick: tick + ticksPerStep - 1, status: 0x89, note, vel: 0 });
+      }
     }
   }
+
   events.sort((a, b) => a.tick - b.tick || (a.status & 0xF0) - (b.status & 0xF0));
 
   const trk = [];
-  // Tempo
   trk.push(0x00, 0xFF, 0x51, 0x03,
     (uspb >> 16) & 0xFF, (uspb >> 8) & 0xFF, uspb & 0xFF);
   let cur = 0;
@@ -732,7 +1027,6 @@ function exportMidi(seq) {
     cur = e.tick;
     trk.push(e.status, e.note, e.vel);
   }
-  // Loop back marker (one full measure)
   const loopTick = seq.totalSteps * ticksPerStep;
   trk.push(...vlq(loopTick - cur), 0xFF, 0x2F, 0x00);
 
@@ -761,14 +1055,15 @@ function importMidi(buffer) {
   const skip = (n, end) => { p = Math.min(p + n, end); };
 
   if (u32() !== 0x4D546864) throw new Error('Not a MIDI file');
-  const hLen = u32(); // usually 6, but skip exactly what the file says
+  const hLen = u32();
   u16(); // format
   const nTracks = u16();
   const ppq = u16();
-  p = 8 + hLen; // jump past any non-standard header bytes
+  p = 8 + hLen;
   if (ppq & 0x8000) throw new Error('SMPTE timecode not supported');
 
-  const hits = {};
+  const drumHits = {};   // inst → { step → vel }
+  const melHits  = {};   // ch   → { step → { note, vel } }
   let maxTick = 0;
 
   for (let t = 0; t < nTracks; t++) {
@@ -780,16 +1075,15 @@ function importMidi(buffer) {
 
     while (p < trkEnd) {
       tick += readVlq();
-      if (p >= trkEnd) break; // delta consumed remaining bytes (malformed)
-
+      if (p >= trkEnd) break;
       let sb = dv.getUint8(p);
       if (sb & 0x80) { rs = sb; p++; } else { sb = rs; }
       if (p >= trkEnd && sb !== 0xFF) break;
 
       if (sb === 0xFF) {
         const mtype = u8();
-        const mlen = readVlq();
-        if (mtype === 0x2F) { p = trkEnd; break; } // end of track
+        const mlen  = readVlq();
+        if (mtype === 0x2F) { p = trkEnd; break; }
         skip(mlen, trkEnd);
       } else if (sb === 0xF0 || sb === 0xF7) {
         skip(readVlq(), trkEnd);
@@ -799,15 +1093,20 @@ function importMidi(buffer) {
           case 0x90: {
             if (p + 1 >= trkEnd) { p = trkEnd; break; }
             const note = u8(), vel = u8();
-            if (ch === 9 && vel > 0) {
-              const inst = NOTE_TO_INSTRUMENT[note];
-              if (inst) {
-                const step = Math.round(tick / (ppq / 4));
-                const lv = vel > 100 ? 3 : vel > 64 ? 2 : 1;
-                if (!hits[inst]) hits[inst] = {};
-                if (!hits[inst][step]) hits[inst][step] = lv;
-                maxTick = Math.max(maxTick, tick);
+            if (vel > 0) {
+              const step = Math.round(tick / (ppq / 4));
+              const lv = vel > 100 ? 3 : vel > 64 ? 2 : 1;
+              if (ch === 9) {
+                const inst = NOTE_TO_INSTRUMENT[note];
+                if (inst) {
+                  if (!drumHits[inst]) drumHits[inst] = {};
+                  if (!drumHits[inst][step]) drumHits[inst][step] = lv;
+                }
+              } else {
+                if (!melHits[ch]) melHits[ch] = {};
+                if (!melHits[ch][step]) melHits[ch][step] = { note: midiToNote(note), vel: lv };
               }
+              maxTick = Math.max(maxTick, tick);
             }
             break;
           }
@@ -822,16 +1121,16 @@ function importMidi(buffer) {
 
   const stepsDetected = Math.ceil((maxTick / ppq) * 4);
   const totalSteps = stepsDetected <= 8 ? 8 : stepsDetected <= 16 ? 16 : 32;
-  return { hits, totalSteps };
+  return { drumHits, melHits, totalSteps };
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const audio = new AudioEngine();
-  const seq = new Sequencer(audio);
+  const tone  = new ToneEngine();
+  const seq   = new Sequencer(audio, tone);
   audio.sequencer = seq;
 
-  // Resume AudioContext when returning to the tab (mobile screen-lock / app-switch)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') audio.resume();
   });
@@ -856,35 +1155,45 @@ document.addEventListener('DOMContentLoaded', () => {
     const reader = new FileReader();
     reader.onload = evt => {
       try {
-        const { hits, totalSteps } = importMidi(evt.target.result);
+        const { drumHits, melHits, totalSteps } = importMidi(evt.target.result);
 
-        // Clear existing tracks and grid
         for (const track of [...seq.tracks]) seq.removeTrack(track.id);
         seq.totalSteps = totalSteps;
         ui._initSequencerDOM();
 
-        // Rebuild the steps selector to match
         const stepsEl = document.getElementById('steps');
         if ([8, 16, 32].includes(totalSteps)) stepsEl.value = totalSteps;
 
-        // Add a track for each instrument found
-        const LABEL = {
+        audio.init();
+
+        const DRUM_LABEL = {
           kick: '808 Kick', snare: '808 Snare', hihat_c: 'Closed Hat',
           hihat_o: 'Open Hat', clap: '808 Clap', tom_hi: 'High Tom',
           tom_lo: 'Low Tom', rimshot: 'Rimshot', cowbell: 'Cowbell',
         };
-        for (const [inst, stepMap] of Object.entries(hits)) {
-          audio.init(); // ensure ctx exists
-          const track = seq.addTrack(inst, LABEL[inst] || inst);
+        for (const [inst, stepMap] of Object.entries(drumHits)) {
+          const track = seq.addTrack(inst, DRUM_LABEL[inst] || inst, 'drum');
           for (const [step, lv] of Object.entries(stepMap)) {
             if (step < totalSteps) track.steps[step] = lv;
+          }
+          ui._renderTrack(track);
+        }
+
+        let melIdx = 0;
+        for (const [, stepMap] of Object.entries(melHits)) {
+          const track = seq.addTrack('synth_poly', `Melody ${++melIdx}`, 'melody');
+          for (const [step, { note, vel }] of Object.entries(stepMap)) {
+            if (step < totalSteps) {
+              track.steps[step] = vel;
+              track.noteSteps[step] = note;
+            }
           }
           ui._renderTrack(track);
         }
       } catch (err) {
         alert(`Could not read MIDI file: ${err.message}`);
       }
-      e.target.value = ''; // allow re-importing the same file
+      e.target.value = '';
     };
     reader.readAsArrayBuffer(file);
   });
