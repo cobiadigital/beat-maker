@@ -265,11 +265,17 @@ class Sequencer {
     }
   }
 
+  _makeWorker() {
+    const src = `let t; onmessage=e=>{if(e.data==='start')t=setInterval(()=>postMessage(0),25);else{clearInterval(t);t=null;}};`;
+    const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    w.onmessage = () => this._schedule();
+    return w;
+  }
+
   start() {
     this.audio.init();
     this.audio.resume();
 
-    // Ensure all offline tracks have gain nodes
     for (const track of this.tracks) {
       if (!this.audio.trackGains[track.id]) this.audio._createTrackGain(track);
     }
@@ -277,13 +283,14 @@ class Sequencer {
     this.isPlaying = true;
     this.currentStep = 0;
     this.nextStepTime = this.audio.ctx.currentTime + 0.05;
-    this._schedulerTimer = setInterval(() => this._schedule(), 25);
+
+    if (!this._worker) this._worker = this._makeWorker();
+    this._worker.postMessage('start');
   }
 
   stop() {
     this.isPlaying = false;
-    clearInterval(this._schedulerTimer);
-    this._schedulerTimer = null;
+    if (this._worker) this._worker.postMessage('stop');
     this.currentStep = 0;
   }
 
@@ -754,6 +761,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const audio = new AudioEngine();
   const seq = new Sequencer(audio);
   audio.sequencer = seq;
+
+  // Resume AudioContext when returning to the tab (mobile screen-lock / app-switch)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') audio.resume();
+  });
 
   const ui = new UI(seq);
   ui.init();
