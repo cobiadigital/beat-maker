@@ -238,7 +238,7 @@ class Sequencer {
 
   addTrackOffline(instrument, label) {
     const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const track = { id, instrument, label, volume: 0.8, muted: false,
+    const track = { id, instrument, label, volume: 0.5, muted: false,
                     steps: new Int8Array(this.totalSteps) };
     this.tracks.push(track);
     return track;
