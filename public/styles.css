@@ -420,14 +420,13 @@ select:focus { outline: 1px solid var(--accent2); }
 .mel-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 8px 4px 6px;
+  gap: 4px;
+  padding: 4px 7px 4px 6px;
   background: var(--surface3);
   border: 1px solid var(--border);
   border-radius: 20px;
   cursor: pointer;
   touch-action: manipulation;
-  max-width: 160px;
   transition: border-color 0.1s;
 }
 .mel-chip.selected {
@@ -449,6 +448,24 @@ select:focus { outline: 1px solid var(--accent2); }
   text-overflow: ellipsis;
   letter-spacing: 0.3px;
 }
+
+.mel-chip-ctrl {
+  font-size: 8px;
+  font-family: inherit;
+  font-weight: bold;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--surface3);
+  border-radius: 3px;
+  padding: 1px 5px;
+  cursor: pointer;
+  touch-action: manipulation;
+  white-space: nowrap;
+  line-height: 14px;
+  transition: background 0.1s, color 0.1s;
+}
+.mel-chip-ctrl:active { background: var(--surface3); color: var(--text); }
+.mel-chip-ctrl-oct { min-width: 22px; text-align: center; }
 
 .mel-chip-mute, .mel-chip-remove {
   width: 16px;
