@@ -10,6 +10,10 @@
 
   <header id="header">
     <span class="app-title">808 BEAT MAKER</span>
+    <nav class="view-tabs">
+      <button class="view-tab active" data-view="beat">BEAT</button>
+      <button class="view-tab" data-view="melody">MELODY</button>
+    </nav>
   </header>
 
   <div id="transport">
@@ -46,17 +50,26 @@
       </select>
     </div>
 
-    <button id="add-track" class="add-track-btn">+ ADD TRACK</button>
+    <button id="add-track" class="add-track-btn">+ ADD DRUM</button>
     <button id="midi-export" class="midi-btn" title="Download MIDI">&#8595; MIDI</button>
     <label id="midi-import-label" class="midi-btn" title="Load MIDI">&#8593; MIDI
       <input type="file" id="midi-import" accept=".mid,.midi" style="display:none">
     </label>
   </div>
 
-  <div id="track-list"></div>
+  <!-- Beat view: drum step sequencer -->
+  <div id="beat-view">
+    <div id="track-list"></div>
+  </div>
+
+  <!-- Melody view: piano roll for synth tracks -->
+  <div id="melody-view" class="view-hidden">
+    <div id="melody-tracks-bar"></div>
+    <div id="piano-roll"></div>
+  </div>
 
   <dialog id="instrument-dialog">
-    <h2>Add Instrument</h2>
+    <h2 id="dialog-title">Add Instrument</h2>
     <div id="preset-list"></div>
     <button id="dialog-cancel" class="dialog-cancel-btn">Cancel</button>
   </dialog>
