@@ -482,14 +482,83 @@ class UI {
     cell.className = `step-cell vel-${track.steps[stepIdx]}`;
     cell.dataset.trackId = track.id;
     cell.dataset.step = stepIdx;
-    cell.addEventListener('click', () => {
-      track.steps[stepIdx] = (track.steps[stepIdx] + 1) % 4;
-      cell.className = `step-cell vel-${track.steps[stepIdx]}`;
+
+    let holdTimer = null;
+    let startX, startY;
+
+    cell.addEventListener('contextmenu', e => e.preventDefault());
+
+    cell.addEventListener('pointerdown', e => {
+      startX = e.clientX; startY = e.clientY;
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        this._showVelPicker(cell, track, stepIdx);
+      }, 380);
     });
+
+    cell.addEventListener('pointermove', e => {
+      if (holdTimer && (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8)) {
+        clearTimeout(holdTimer); holdTimer = null;
+      }
+    });
+
+    cell.addEventListener('pointerup', () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer); holdTimer = null;
+        // Tap: toggle off ↔ on at full velocity
+        track.steps[stepIdx] = track.steps[stepIdx] > 0 ? 0 : 3;
+        cell.className = `step-cell vel-${track.steps[stepIdx]}`;
+      }
+    });
+
+    cell.addEventListener('pointercancel', () => { clearTimeout(holdTimer); holdTimer = null; });
+
     return cell;
   }
 
-  _rebuildGrids() {
+  _showVelPicker(cell, track, stepIdx) {
+    this._closeVelPicker();
+
+    const picker = document.createElement('div');
+    picker.id = 'vel-picker';
+    picker.className = 'vel-picker';
+
+    [{ v: 1, label: 'LOW' }, { v: 2, label: 'MID' }, { v: 3, label: 'HIGH' }].forEach(({ v, label }) => {
+      const btn = document.createElement('button');
+      btn.className = `vel-opt vel-opt-${v}`;
+      if (track.steps[stepIdx] === v) btn.classList.add('active');
+      btn.textContent = label;
+      btn.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        track.steps[stepIdx] = v;
+        cell.className = `step-cell vel-${v}`;
+        this._closeVelPicker();
+      });
+      picker.appendChild(btn);
+    });
+
+    const rect = cell.getBoundingClientRect();
+    const pw = 150, ph = 40;
+    let left = rect.left + rect.width / 2 - pw / 2;
+    let top  = rect.top - ph - 8;
+    left = Math.max(4, Math.min(left, window.innerWidth - pw - 4));
+    if (top < 4) top = rect.bottom + 6;
+    picker.style.left = `${left}px`;
+    picker.style.top  = `${top}px`;
+
+    document.body.appendChild(picker);
+
+    const onOutside = e => { if (!picker.contains(e.target)) this._closeVelPicker(); };
+    setTimeout(() => document.addEventListener('pointerdown', onOutside, { once: true }), 50);
+    picker._outside = onOutside;
+  }
+
+  _closeVelPicker() {
+    const p = document.getElementById('vel-picker');
+    if (p) { if (p._outside) document.removeEventListener('pointerdown', p._outside); p.remove(); }
+  }
+
+
     document.querySelectorAll('.step-row').forEach(r => r.remove());
 
     const container = document.getElementById('track-list');

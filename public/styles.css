@@ -332,6 +332,39 @@ select:focus { outline: 1px solid var(--accent2); }
 .step-cell.vel-2:hover { filter: brightness(1.15); }
 .step-cell.vel-3:hover { filter: brightness(1.1); }
 
+/* ── Velocity picker popup ── */
+.vel-picker {
+  position: fixed;
+  z-index: 200;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  gap: 3px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.65);
+  touch-action: none;
+}
+
+.vel-opt {
+  width: 46px;
+  height: 32px;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: filter 0.1s;
+  touch-action: manipulation;
+}
+.vel-opt-1 { background: var(--cell-low);  color: #ff8040; }
+.vel-opt-2 { background: var(--cell-mid);  color: #ffb060; }
+.vel-opt-3 { background: var(--cell-high); color: #fff; }
+.vel-opt.active { border-color: rgba(255,255,255,0.6); }
+.vel-opt:hover  { filter: brightness(1.3); }
+
 /* ── Add Instrument Dialog ── */
 dialog {
   background: var(--surface2);
