@@ -161,6 +161,26 @@ select:focus { outline: 1px solid var(--accent2); }
   color: #fff;
 }
 
+.midi-btn {
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--surface3);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 1px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+  touch-action: manipulation;
+  display: inline-flex;
+  align-items: center;
+}
+.midi-btn:hover, .midi-btn:active {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
 /* ── Sequencer ── */
 #track-list {
   flex: 1 1 0;
@@ -230,6 +250,22 @@ select:focus { outline: 1px solid var(--accent2); }
   border-left: 1px solid var(--border);
   overflow: hidden;
   gap: 3px;
+  position: relative;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.track-header:active { cursor: grabbing; }
+
+/* Volume fill bar — grows from bottom, behind content */
+.vol-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(74, 143, 232, 0.18);
+  pointer-events: none;
+  transition: height 0.04s linear;
 }
 
 .track-header-name {
@@ -241,30 +277,14 @@ select:focus { outline: 1px solid var(--accent2); }
   white-space: nowrap;
   width: 100%;
   letter-spacing: 0.2px;
-}
-
-.track-vol {
-  -webkit-appearance: none;
-  width: 88%;
-  height: 3px;
-  background: var(--surface3);
-  border-radius: 1px;
-  outline: none;
-  cursor: pointer;
-}
-.track-vol::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
-  background: var(--text-dim);
-  border-radius: 50%;
-  cursor: pointer;
+  position: relative; /* above vol-bar */
 }
 
 .track-header-btns {
   display: flex;
   gap: 2px;
   align-items: center;
+  position: relative; /* above vol-bar */
 }
 
 .mute-btn, .remove-btn {
