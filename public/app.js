@@ -682,36 +682,46 @@ function importMidi(buffer) {
     do { b = u8(); v = (v << 7) | (b & 0x7F); } while (b & 0x80);
     return v;
   };
+  const skip = (n, end) => { p = Math.min(p + n, end); };
 
   if (u32() !== 0x4D546864) throw new Error('Not a MIDI file');
-  u32(); // header length (6)
+  const hLen = u32(); // usually 6, but skip exactly what the file says
   u16(); // format
   const nTracks = u16();
   const ppq = u16();
-  if (ppq & 0x8000) throw new Error('SMPTE not supported');
+  p = 8 + hLen; // jump past any non-standard header bytes
+  if (ppq & 0x8000) throw new Error('SMPTE timecode not supported');
 
-  const hits  = {}; // instrument → { step → velLevel }
+  const hits = {};
   let maxTick = 0;
 
   for (let t = 0; t < nTracks; t++) {
-    if (u32() !== 0x4D54726B) throw new Error('Bad track');
+    if (p + 8 > dv.byteLength) break;
+    if (u32() !== 0x4D54726B) throw new Error('Bad track chunk');
     const trkLen = u32();
-    const trkEnd = p + trkLen;
+    const trkEnd = Math.min(p + trkLen, dv.byteLength);
     let tick = 0, rs = 0;
 
     while (p < trkEnd) {
       tick += readVlq();
+      if (p >= trkEnd) break; // delta consumed remaining bytes (malformed)
+
       let sb = dv.getUint8(p);
       if (sb & 0x80) { rs = sb; p++; } else { sb = rs; }
+      if (p >= trkEnd && sb !== 0xFF) break;
 
-      const type = sb & 0xF0, ch = sb & 0x0F;
       if (sb === 0xFF) {
-        u8(); p += readVlq(); // meta: skip
+        const mtype = u8();
+        const mlen = readVlq();
+        if (mtype === 0x2F) { p = trkEnd; break; } // end of track
+        skip(mlen, trkEnd);
       } else if (sb === 0xF0 || sb === 0xF7) {
-        p += readVlq(); // sysex: skip
+        skip(readVlq(), trkEnd);
       } else {
+        const type = sb & 0xF0, ch = sb & 0x0F;
         switch (type) {
           case 0x90: {
+            if (p + 1 >= trkEnd) { p = trkEnd; break; }
             const note = u8(), vel = u8();
             if (ch === 9 && vel > 0) {
               const inst = NOTE_TO_INSTRUMENT[note];
@@ -725,8 +735,8 @@ function importMidi(buffer) {
             }
             break;
           }
-          case 0x80: case 0xA0: case 0xB0: case 0xE0: p += 2; break;
-          case 0xC0: case 0xD0: p += 1; break;
+          case 0x80: case 0xA0: case 0xB0: case 0xE0: skip(2, trkEnd); break;
+          case 0xC0: case 0xD0: skip(1, trkEnd); break;
           default: p = trkEnd;
         }
       }
@@ -734,7 +744,7 @@ function importMidi(buffer) {
     p = trkEnd;
   }
 
-  const stepsDetected = Math.ceil((maxTick / ppq) * 4); // convert to 16th note steps
+  const stepsDetected = Math.ceil((maxTick / ppq) * 4);
   const totalSteps = stepsDetected <= 8 ? 8 : stepsDetected <= 16 ? 16 : 32;
   return { hits, totalSteps };
 }
