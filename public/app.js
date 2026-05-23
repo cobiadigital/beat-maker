@@ -337,16 +337,15 @@ class UI {
   init() {
     this._bindTransport();
     this._buildDialog();
-
     this.seq.onStepChange = step => this._updatePlayhead(step);
-
     document.getElementById('add-track').addEventListener('click', () => {
-      this.seq.audio.init(); // ensure ctx exists before dialog
+      this.seq.audio.init();
       document.getElementById('instrument-dialog').showModal();
     });
   }
 
   _initDefaultKit() {
+    this._initSequencerDOM();
     const defaults = [
       { instrument: 'kick',    label: '808 Kick'  },
       { instrument: 'snare',   label: '808 Snare' },
@@ -360,19 +359,46 @@ class UI {
     }
   }
 
-  _renderTrack(track) {
+  // Build the sticky header row + one step-row per step
+  _initSequencerDOM() {
+    const container = document.getElementById('track-list');
+    container.innerHTML = '';
+
+    const headerRow = document.createElement('div');
+    headerRow.id = 'seq-header-row';
+    headerRow.className = 'seq-row header-row';
+    const corner = document.createElement('div');
+    corner.className = 'step-label corner';
+    headerRow.appendChild(corner);
+    container.appendChild(headerRow);
+
+    for (let i = 0; i < this.seq.totalSteps; i++) {
+      container.appendChild(this._makeStepRow(i));
+    }
+  }
+
+  _makeStepRow(i) {
     const row = document.createElement('div');
-    row.className = 'track-row';
-    row.dataset.trackId = track.id;
-
-    // Label
+    row.className = 'seq-row step-row';
+    row.dataset.step = i;
+    if (i % 4 === 0) row.dataset.beat = 'true';
     const label = document.createElement('div');
-    label.className = 'track-label';
-    label.textContent = track.label;
+    label.className = 'step-label';
+    label.textContent = i + 1;
+    row.appendChild(label);
+    return row;
+  }
 
-    // Controls
-    const controls = document.createElement('div');
-    controls.className = 'track-controls';
+  // Add a column: header cell + one step-cell per existing step-row
+  _renderTrack(track) {
+    const header = document.createElement('div');
+    header.className = 'track-header';
+    header.dataset.trackId = track.id;
+
+    const name = document.createElement('div');
+    name.className = 'track-header-name';
+    name.textContent = track.label;
+    name.title = track.label;
 
     const vol = document.createElement('input');
     vol.type = 'range'; vol.className = 'track-vol';
@@ -384,6 +410,9 @@ class UI {
       if (g) g.gain.value = track.volume;
     });
 
+    const btns = document.createElement('div');
+    btns.className = 'track-header-btns';
+
     const muteBtn = document.createElement('button');
     muteBtn.className = 'mute-btn';
     muteBtn.textContent = 'M';
@@ -394,71 +423,67 @@ class UI {
     });
 
     const removeBtn = document.createElement('button');
-    removeBtn.className = 'mute-btn';
+    removeBtn.className = 'remove-btn';
     removeBtn.textContent = '✕';
-    removeBtn.title = 'Remove track';
-    removeBtn.style.fontSize = '9px';
+    removeBtn.title = 'Remove';
     removeBtn.addEventListener('click', () => {
       this.seq.removeTrack(track.id);
-      row.remove();
+      header.remove();
+      document.querySelectorAll(`.step-cell[data-track-id="${track.id}"]`).forEach(el => el.remove());
     });
 
-    controls.appendChild(vol);
-    controls.appendChild(muteBtn);
-    controls.appendChild(removeBtn);
+    btns.appendChild(muteBtn);
+    btns.appendChild(removeBtn);
+    header.appendChild(name);
+    header.appendChild(vol);
+    header.appendChild(btns);
+    document.getElementById('seq-header-row').appendChild(header);
 
-    // Step grid
-    const grid = this._buildGrid(track);
-
-    row.appendChild(label);
-    row.appendChild(controls);
-    row.appendChild(grid);
-
-    document.getElementById('track-list').appendChild(row);
+    // Add one cell per step row
+    document.querySelectorAll('.step-row').forEach(row => {
+      const stepIdx = parseInt(row.dataset.step);
+      if (isNaN(stepIdx)) return;
+      row.appendChild(this._makeCell(track, stepIdx));
+    });
   }
 
-  _buildGrid(track) {
-    const grid = document.createElement('div');
-    grid.className = 'step-grid';
-
-    for (let i = 0; i < this.seq.totalSteps; i++) {
-      const cell = this._buildCell(track, i);
-      grid.appendChild(cell);
-    }
-    return grid;
-  }
-
-  _buildCell(track, i) {
+  _makeCell(track, stepIdx) {
     const cell = document.createElement('div');
-    cell.className = `step-cell vel-${track.steps[i]}`;
-    cell.dataset.step = i;
-    if (i % 4 === 0) cell.dataset.beat = 'true';
-
+    cell.className = `step-cell vel-${track.steps[stepIdx]}`;
+    cell.dataset.trackId = track.id;
+    cell.dataset.step = stepIdx;
     cell.addEventListener('click', () => {
-      track.steps[i] = (track.steps[i] + 1) % 4;
-      cell.className = `step-cell vel-${track.steps[i]}`;
-      if (this.activeStep === i) cell.classList.add('active');
+      track.steps[stepIdx] = (track.steps[stepIdx] + 1) % 4;
+      cell.className = `step-cell vel-${track.steps[stepIdx]}`;
     });
     return cell;
   }
 
   _rebuildGrids() {
-    document.querySelectorAll('.track-row').forEach(row => {
-      const trackId = row.dataset.trackId;
-      const track = this.seq.tracks.find(t => t.id === trackId);
-      if (!track) return;
+    document.querySelectorAll('.step-row').forEach(r => r.remove());
 
-      const oldGrid = row.querySelector('.step-grid');
-      if (!oldGrid) return;
+    const container = document.getElementById('track-list');
+    for (let i = 0; i < this.seq.totalSteps; i++) {
+      container.appendChild(this._makeStepRow(i));
+    }
 
-      const newGrid = this._buildGrid(track);
-      row.replaceChild(newGrid, oldGrid);
-    });
+    for (const track of this.seq.tracks) {
+      document.querySelectorAll('.step-row').forEach(row => {
+        const stepIdx = parseInt(row.dataset.step);
+        row.appendChild(this._makeCell(track, stepIdx));
+      });
+    }
+
+    this.activeStep = -1;
   }
 
   _updatePlayhead(step) {
-    document.querySelectorAll('.step-cell.active').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll(`.step-cell[data-step="${step}"]`).forEach(el => el.classList.add('active'));
+    if (this.activeStep >= 0) {
+      const prev = document.querySelector(`.step-row[data-step="${this.activeStep}"]`);
+      if (prev) prev.classList.remove('active');
+    }
+    const curr = document.querySelector(`.step-row[data-step="${step}"]`);
+    if (curr) curr.classList.add('active');
     this.activeStep = step;
   }
 
@@ -470,8 +495,11 @@ class UI {
         this.seq.stop();
         playBtn.textContent = '▶ PLAY';
         playBtn.classList.remove('playing');
-        document.querySelectorAll('.step-cell.active').forEach(el => el.classList.remove('active'));
-        this.activeStep = -1;
+        if (this.activeStep >= 0) {
+          const row = document.querySelector(`.step-row[data-step="${this.activeStep}"]`);
+          if (row) row.classList.remove('active');
+          this.activeStep = -1;
+        }
       } else {
         this.seq.start();
         playBtn.textContent = '■ STOP';
@@ -499,8 +527,6 @@ class UI {
 
     document.getElementById('beats-per-measure').addEventListener('change', e => {
       this.seq.beatsPerMeasure = parseInt(e.target.value);
-      const newTotal = this.seq.beatsPerMeasure * 4;
-      document.getElementById('steps').value = newTotal <= 32 && newTotal >= 8 ? newTotal : this.seq.totalSteps;
       this.seq.setTotalSteps(this.seq.beatsPerMeasure * 4);
       this._rebuildGrids();
     });
