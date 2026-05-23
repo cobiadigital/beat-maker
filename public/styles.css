@@ -17,6 +17,9 @@
   --step-h: 36px;
   --header-h: 62px;
   --label-w: 24px;
+  --pr-label-w: 30px;
+  --pr-row-h: 22px;
+  --pr-cell-min: 18px;
 }
 
 *, *::before, *::after {
@@ -45,6 +48,7 @@ body {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 6px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -55,6 +59,32 @@ body {
   font-weight: bold;
   letter-spacing: 3px;
   color: var(--accent);
+}
+
+/* ── View tabs ── */
+.view-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.view-tab {
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid var(--surface3);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 1.5px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+  touch-action: manipulation;
+}
+.view-tab.active {
+  border-color: var(--accent2);
+  color: var(--accent2);
+  background: rgba(74,143,232,0.1);
 }
 
 /* ── Transport ── */
@@ -187,7 +217,16 @@ select:focus { outline: 1px solid var(--accent2); }
   color: var(--text);
 }
 
-/* ── Sequencer ── */
+/* ── View containers ── */
+#beat-view, #melody-view {
+  flex: 1 1 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.view-hidden { display: none !important; }
+
+/* ── Beat sequencer ── */
 #track-list {
   flex: 1 1 0;
   overflow-y: auto;
@@ -195,13 +234,11 @@ select:focus { outline: 1px solid var(--accent2); }
   -webkit-overflow-scrolling: touch;
 }
 
-/* Each row is a horizontal flex: [step-label] [cell] [cell] ... */
 .seq-row {
   display: flex;
   align-items: stretch;
 }
 
-/* Sticky column-header row */
 .header-row {
   height: var(--header-h);
   position: sticky;
@@ -211,23 +248,19 @@ select:focus { outline: 1px solid var(--accent2); }
   border-bottom: 2px solid var(--border);
 }
 
-/* Each step row */
 .step-row {
   height: var(--step-h);
   border-bottom: 1px solid rgba(255,255,255,0.03);
 }
 
-/* Beat grouping: top border every 4 steps */
 .step-row[data-beat="true"] {
   border-top: 2px solid var(--surface3);
 }
 
-/* Playhead highlight */
 .step-row.active {
   background: rgba(74, 143, 232, 0.13);
 }
 
-/* Step number label column */
 .step-label {
   flex: 0 0 var(--label-w);
   display: flex;
@@ -236,7 +269,6 @@ select:focus { outline: 1px solid var(--accent2); }
   font-size: 9px;
   color: var(--text-dim);
   border-right: 1px solid var(--border);
-  user-select: none;
 }
 
 .step-row[data-beat="true"] .step-label {
@@ -244,7 +276,6 @@ select:focus { outline: 1px solid var(--accent2); }
   font-weight: bold;
 }
 
-/* Track column header */
 .track-header {
   flex: 1 1 0;
   min-width: 0;
@@ -258,12 +289,9 @@ select:focus { outline: 1px solid var(--accent2); }
   gap: 3px;
   position: relative;
   cursor: grab;
-  user-select: none;
-  -webkit-user-select: none;
 }
 .track-header:active { cursor: grabbing; }
 
-/* Volume fill bar — grows from bottom, behind content */
 .vol-bar {
   position: absolute;
   bottom: 0;
@@ -283,14 +311,14 @@ select:focus { outline: 1px solid var(--accent2); }
   white-space: nowrap;
   width: 100%;
   letter-spacing: 0.2px;
-  position: relative; /* above vol-bar */
+  position: relative;
 }
 
 .track-header-btns {
   display: flex;
   gap: 2px;
   align-items: center;
-  position: relative; /* above vol-bar */
+  position: relative;
 }
 
 .mute-btn, .remove-btn {
@@ -317,7 +345,6 @@ select:focus { outline: 1px solid var(--accent2); }
 }
 .remove-btn:hover { background: #502020; border-color: #804040; color: #ff8080; }
 
-/* Step cells inside each step-row */
 .step-cell {
   flex: 1 1 0;
   min-width: 0;
@@ -338,7 +365,7 @@ select:focus { outline: 1px solid var(--accent2); }
 .step-cell.vel-2:hover { filter: brightness(1.15); }
 .step-cell.vel-3:hover { filter: brightness(1.1); }
 
-/* ── Velocity picker popup ── */
+/* ── Velocity picker ── */
 .vel-picker {
   position: fixed;
   z-index: 200;
@@ -371,14 +398,204 @@ select:focus { outline: 1px solid var(--accent2); }
 .vel-opt.active { border-color: rgba(255,255,255,0.6); }
 .vel-opt:hover  { filter: brightness(1.3); }
 
-/* ── Add Instrument Dialog ── */
+/* ── Melody view ── */
+#melody-tracks-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 10px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  min-height: 44px;
+}
+
+.melody-empty {
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
+.mel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 4px 6px;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  cursor: pointer;
+  touch-action: manipulation;
+  max-width: 160px;
+  transition: border-color 0.1s;
+}
+.mel-chip.selected {
+  background: rgba(74,143,232,0.08);
+}
+
+.mel-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+}
+
+.mel-chip-name {
+  font-size: 9px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+}
+
+.mel-chip-mute, .mel-chip-remove {
+  width: 16px;
+  height: 16px;
+  background: transparent;
+  border: 1px solid var(--surface3);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 7px;
+  font-weight: bold;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  touch-action: manipulation;
+  transition: background 0.1s;
+}
+.mel-chip-mute.muted { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mel-chip-remove:hover { background: #502020; color: #ff8080; }
+
+/* ── Piano roll ── */
+#piano-roll {
+  flex: 1 1 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+}
+
+.pr-row {
+  display: flex;
+  align-items: stretch;
+  height: var(--pr-row-h);
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  min-width: max-content;
+}
+
+/* C note rows: thicker top border */
+.pr-row.c-note {
+  border-top: 2px solid rgba(255,255,255,0.1);
+}
+
+/* Sharp (black key) rows are slightly darker */
+.pr-row.sharp {
+  background: rgba(0,0,0,0.25);
+}
+
+.pr-header-row {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--surface2);
+  border-bottom: 2px solid var(--border);
+  height: 22px;
+}
+
+.pr-label {
+  flex: 0 0 var(--pr-label-w);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  font-size: 7px;
+  color: var(--text-dim);
+  border-right: 1px solid var(--border);
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--surface);
+}
+
+.pr-row.sharp .pr-label {
+  background: #18181e;
+}
+
+.pr-row.c-note .pr-label {
+  color: #7ae0a0;
+  font-weight: bold;
+  font-size: 8px;
+}
+
+.pr-header-row .pr-label {
+  background: var(--surface2);
+  z-index: 6;
+}
+
+.pr-header-cell {
+  flex: 1 1 0;
+  min-width: var(--pr-cell-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: var(--text-dim);
+  border-left: 1px solid rgba(255,255,255,0.04);
+}
+
+/* Beat grouping in header: every 4th step gets a left border highlight */
+.pr-header-cell.beat-start {
+  border-left-color: var(--surface3);
+  color: var(--text);
+}
+
+.pr-header-cell.playhead {
+  color: var(--accent2);
+}
+
+.pr-cell {
+  flex: 1 1 0;
+  min-width: var(--pr-cell-min);
+  margin: 2px 1px;
+  border-radius: 2px;
+  background: var(--cell-off);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background-color 0.04s;
+  position: relative;
+}
+
+.pr-row.sharp .pr-cell {
+  background: #1a1a22;
+}
+
+.pr-cell:hover:not(.filled) {
+  background: var(--surface3);
+}
+
+/* Active step column overlay */
+.pr-cell.col-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(74,143,232,0.18);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ── Dialog ── */
 dialog {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
-  padding: 20px 20px;
-  min-width: 260px;
+  padding: 20px;
+  min-width: 240px;
   max-width: 90vw;
   box-shadow: 0 8px 40px rgba(0,0,0,0.7);
 }
@@ -393,6 +610,9 @@ dialog h2 {
 }
 
 #preset-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
   margin-bottom: 14px;
 }
 
@@ -429,113 +649,7 @@ dialog h2 {
 }
 .dialog-cancel-btn:hover { background: var(--surface3); color: var(--text); }
 
-/* ── Melody track header accent ── */
-.track-header.melody-track .vol-bar {
-  background: rgba(80, 200, 120, 0.18);
-}
-.track-header.melody-track .track-header-name {
-  color: #7ae0a0;
-}
-
-/* ── Melody step cells ── */
-.mel-cell {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-.mel-cell.vel-0 { background: var(--cell-off); }
-.mel-cell.vel-1 { background: #0a3c20; }
-.mel-cell.vel-2 { background: #1a7040; }
-.mel-cell.vel-3 { background: #28a85c; }
-.mel-cell.vel-0:hover { background: var(--surface3); }
-.mel-cell.vel-1:hover, .mel-cell.vel-2:hover, .mel-cell.vel-3:hover { filter: brightness(1.2); }
-
-.note-label {
-  font-size: 7px;
-  color: rgba(255,255,255,0.85);
-  pointer-events: none;
-  letter-spacing: 0;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-/* ── Note picker popup ── */
-.note-picker {
-  position: fixed;
-  z-index: 200;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.7);
-  touch-action: none;
-  width: 236px;
-}
-
-.note-picker-vel-row {
-  display: flex;
-  gap: 3px;
-}
-
-.note-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 3px;
-}
-
-.note-btn {
-  padding: 5px 2px;
-  background: var(--surface3);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 8px;
-  font-weight: bold;
-  border-radius: 3px;
-  cursor: pointer;
-  text-align: center;
-  touch-action: manipulation;
-  transition: background 0.08s;
-}
-.note-btn:hover { background: #2a5a3a; }
-.note-btn.note-c { color: #7ae0a0; }
-.note-btn.active { background: #28a85c; border-color: #50d080; color: #fff; }
-
-.note-off-btn {
-  width: 100%;
-  padding: 5px;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  font-family: inherit;
-  font-size: 9px;
-  letter-spacing: 1px;
-  border-radius: 3px;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-.note-off-btn:hover { background: #502020; border-color: #804040; color: #ff8080; }
-
-/* ── Dialog preset sections ── */
-.preset-section { margin-bottom: 10px; }
-.preset-section-title {
-  font-size: 9px;
-  letter-spacing: 2px;
-  color: var(--text-dim);
-  margin-bottom: 5px;
-}
-.preset-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 5px;
-}
-
 /* ── Scrollbar ── */
-::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
