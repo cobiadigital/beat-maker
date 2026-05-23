@@ -257,11 +257,11 @@ class ToneEngine {
     return s;
   }
 
-  trigger(trackId, note, time, velocity, stepDuration) {
+  trigger(trackId, note, time, velocity, noteDuration) {
     const synth = this.synths[trackId];
     if (!synth) return;
     try {
-      synth.triggerAttackRelease(note, Math.max(0.05, stepDuration * 0.8), time,
+      synth.triggerAttackRelease(note, Math.max(0.02, noteDuration), time,
         Math.max(0.01, velocity / 3));
     } catch (e) {}
   }
@@ -299,7 +299,8 @@ class Sequencer {
   addTrackOffline(instrument, label, type = 'drum') {
     const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const track = { id, type, instrument, label, volume: 0.5, muted: false,
-                    steps: new Int8Array(this.totalSteps), colorIdx: 0 };
+                    steps: new Int8Array(this.totalSteps), colorIdx: 0,
+                    noteLength: 1.0, octaveShift: 0 };
     if (type === 'melody') track.noteSteps = new Array(this.totalSteps).fill(null);
     this.tracks.push(track);
     return track;
@@ -380,8 +381,15 @@ class Sequencer {
       const vel = track.steps[stepIndex];
       if (vel > 0 && !track.muted) {
         if (track.type === 'melody') {
-          const note = track.noteSteps ? track.noteSteps[stepIndex] : null;
-          if (note) this.tone.trigger(track.id, note, scheduledTime, vel, stepDuration);
+          let note = track.noteSteps ? track.noteSteps[stepIndex] : null;
+          if (note) {
+            if (track.octaveShift) {
+              const shifted = Math.max(0, Math.min(127, noteToMidi(note) + track.octaveShift * 12));
+              note = midiToNote(shifted);
+            }
+            const noteDur = stepDuration * (track.noteLength || 1.0) * 0.92;
+            this.tone.trigger(track.id, note, scheduledTime, vel, noteDur);
+          }
         } else {
           this.audio.trigger(track.instrument, scheduledTime, vel, track.id);
         }
@@ -402,6 +410,18 @@ const PIANO_ROLL_NOTES = [
 ];
 
 const TRACK_COLORS = ['#4a8fe8','#e84a8f','#4ae88f','#e8c44a','#ae4ae8','#4ae8d8'];
+
+// Note length options as a multiplier of one 16th-note step duration
+const NOTE_LENGTHS = [
+  { mult: 0.25, label: 'S' },   // staccato (~1/64)
+  { mult: 0.5,  label: '½' },   // half-step (~1/32)
+  { mult: 1.0,  label: '1' },   // one step / 16th note (default)
+  { mult: 2.0,  label: '2' },   // two steps / 8th note
+  { mult: 4.0,  label: '4' },   // four steps / quarter note
+];
+
+const OCTAVE_SHIFTS = [-2, -1, 0, 1, 2];
+const _fmtOct = o => o > 0 ? `+${o}` : `${o}`;
 
 const DRUM_PRESETS = [
   { instrument: 'kick',    label: '808 Kick'   },
@@ -723,10 +743,35 @@ class UI {
         this._refreshAllPRCells();
       });
 
+      // Note length cycle button
+      const lenBtn = document.createElement('button');
+      lenBtn.className = 'mel-chip-ctrl';
+      lenBtn.title = 'Note length (tap to cycle)';
+      lenBtn.textContent = NOTE_LENGTHS.find(nl => nl.mult === (track.noteLength || 1))?.label ?? '1';
+      lenBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        const idx = NOTE_LENGTHS.findIndex(nl => nl.mult === track.noteLength);
+        track.noteLength = NOTE_LENGTHS[(idx + 1) % NOTE_LENGTHS.length].mult;
+        lenBtn.textContent = NOTE_LENGTHS.find(nl => nl.mult === track.noteLength).label;
+      });
+
+      // Octave shift cycle button
+      const octBtn = document.createElement('button');
+      octBtn.className = 'mel-chip-ctrl mel-chip-ctrl-oct';
+      octBtn.title = 'Octave shift (tap to cycle)';
+      octBtn.textContent = _fmtOct(track.octaveShift || 0);
+      octBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        const idx = OCTAVE_SHIFTS.indexOf(track.octaveShift);
+        track.octaveShift = OCTAVE_SHIFTS[(idx + 1) % OCTAVE_SHIFTS.length];
+        octBtn.textContent = _fmtOct(track.octaveShift);
+      });
+
       // Tap = select, long hold = edit synth
       let holdTimer = null;
       chip.addEventListener('pointerdown', e => {
-        if (e.target.closest('.mel-chip-mute') || e.target.closest('.mel-chip-remove')) return;
+        if (e.target.closest('.mel-chip-mute') || e.target.closest('.mel-chip-remove') ||
+            e.target.closest('.mel-chip-ctrl')) return;
         holdTimer = setTimeout(() => {
           holdTimer = null;
           this._openSynthDialog({ track, nameEl });
@@ -743,6 +788,8 @@ class UI {
 
       chip.appendChild(dot);
       chip.appendChild(nameEl);
+      chip.appendChild(lenBtn);
+      chip.appendChild(octBtn);
       chip.appendChild(muteBtn);
       chip.appendChild(removeBtn);
       bar.appendChild(chip);
@@ -1060,7 +1107,7 @@ function exportMidi(seq) {
         const note = (track.noteSteps || [])[s];
         if (!vel || !note) continue;
         const mv = vel === 1 ? 55 : vel === 2 ? 82 : 110;
-        const mn = Math.max(0, Math.min(127, noteToMidi(note)));
+        const mn = Math.max(0, Math.min(127, noteToMidi(note) + (track.octaveShift || 0) * 12));
         const tick = s * ticksPerStep;
         events.push({ tick, status: 0x90 | ch, note: mn, vel: mv });
         events.push({ tick: tick + ticksPerStep - 1, status: 0x80 | ch, note: mn, vel: 0 });
