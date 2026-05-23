@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>808 Beat Maker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header id="header">
+    <span class="app-title">808 BEAT MAKER</span>
+  </header>
+
+  <div id="transport">
+    <button id="play-stop" class="play-btn">&#9654; PLAY</button>
+
+    <div class="transport-group">
+      <label class="transport-label">BPM</label>
+      <input type="range" id="bpm" min="60" max="200" value="120">
+      <input type="number" id="bpm-num" min="60" max="200" value="120">
+    </div>
+
+    <div class="transport-group">
+      <label class="transport-label">SWING</label>
+      <input type="range" id="swing" min="0" max="100" value="0">
+      <span id="swing-val" class="transport-value">0%</span>
+    </div>
+
+    <div class="transport-group">
+      <label class="transport-label">BEATS</label>
+      <select id="beats-per-measure">
+        <option value="4" selected>4</option>
+        <option value="3">3</option>
+        <option value="2">2</option>
+        <option value="8">8</option>
+      </select>
+    </div>
+
+    <div class="transport-group">
+      <label class="transport-label">STEPS</label>
+      <select id="steps">
+        <option value="16" selected>16</option>
+        <option value="32">32</option>
+        <option value="8">8</option>
+      </select>
+    </div>
+
+    <button id="add-track" class="add-track-btn">+ ADD TRACK</button>
+  </div>
+
+  <div id="track-list"></div>
+
+  <dialog id="instrument-dialog">
+    <h2>Add Instrument</h2>
+    <div id="preset-list"></div>
+    <button id="dialog-cancel" class="dialog-cancel-btn">Cancel</button>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
