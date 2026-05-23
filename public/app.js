@@ -340,7 +340,7 @@ class UI {
     this.seq.onStepChange = step => this._updatePlayhead(step);
     document.getElementById('add-track').addEventListener('click', () => {
       this.seq.audio.init();
-      document.getElementById('instrument-dialog').showModal();
+      this._openForAdd();
     });
   }
 
@@ -395,20 +395,15 @@ class UI {
     header.className = 'track-header';
     header.dataset.trackId = track.id;
 
+    // Volume fill bar (visual only — controlled by drag)
+    const volBar = document.createElement('div');
+    volBar.className = 'vol-bar';
+    volBar.style.height = `${Math.round(track.volume * 100)}%`;
+
     const name = document.createElement('div');
     name.className = 'track-header-name';
     name.textContent = track.label;
     name.title = track.label;
-
-    const vol = document.createElement('input');
-    vol.type = 'range'; vol.className = 'track-vol';
-    vol.min = 0; vol.max = 1; vol.step = 0.01; vol.value = track.volume;
-    vol.title = 'Volume';
-    vol.addEventListener('input', e => {
-      track.volume = parseFloat(e.target.value);
-      const g = this.seq.audio.trackGains[track.id];
-      if (g) g.gain.value = track.volume;
-    });
 
     const btns = document.createElement('div');
     btns.className = 'track-header-btns';
@@ -432,10 +427,38 @@ class UI {
       document.querySelectorAll(`.step-cell[data-track-id="${track.id}"]`).forEach(el => el.remove());
     });
 
+    // Drag = volume, tap = open instrument picker for this track
+    let dragStartY, dragStartVol, hasDragged;
+    header.addEventListener('pointerdown', e => {
+      dragStartY = undefined;
+      if (e.target.closest('.mute-btn') || e.target.closest('.remove-btn')) return;
+      dragStartY = e.clientY;
+      dragStartVol = track.volume;
+      hasDragged = false;
+      header.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    header.addEventListener('pointermove', e => {
+      if (dragStartY === undefined) return;
+      const dy = dragStartY - e.clientY; // up = louder
+      if (Math.abs(dy) > 5 || hasDragged) {
+        hasDragged = true;
+        track.volume = Math.max(0, Math.min(1, dragStartVol + dy / 120));
+        const g = this.seq.audio.trackGains[track.id];
+        if (g) g.gain.value = track.volume;
+        volBar.style.height = `${Math.round(track.volume * 100)}%`;
+      }
+    });
+    header.addEventListener('pointerup', e => {
+      if (!hasDragged && dragStartY !== undefined) this._openForEdit(track, name);
+      dragStartY = undefined;
+    });
+    header.addEventListener('pointercancel', () => { dragStartY = undefined; });
+
     btns.appendChild(muteBtn);
     btns.appendChild(removeBtn);
+    header.appendChild(volBar);
     header.appendChild(name);
-    header.appendChild(vol);
     header.appendChild(btns);
     document.getElementById('seq-header-row').appendChild(header);
 
@@ -539,23 +562,181 @@ class UI {
 
   _buildDialog() {
     const dialog = document.getElementById('instrument-dialog');
+    const title = dialog.querySelector('h2');
     const list = document.getElementById('preset-list');
+    let editTarget = null; // track object when swapping, null when adding
+
+    this._openForAdd = () => {
+      editTarget = null;
+      title.textContent = 'Add Instrument';
+      dialog.showModal();
+    };
+    this._openForEdit = (track, nameEl) => {
+      editTarget = { track, nameEl };
+      title.textContent = 'Change Instrument';
+      dialog.showModal();
+    };
+
+    const closeDialog = () => { editTarget = null; dialog.close(); };
 
     PRESETS.forEach(preset => {
       const btn = document.createElement('button');
       btn.className = 'preset-btn';
       btn.textContent = preset.label;
       btn.addEventListener('click', () => {
-        const track = this.seq.addTrack(preset.instrument, preset.label);
-        this._renderTrack(track);
-        dialog.close();
+        if (editTarget) {
+          editTarget.track.instrument = preset.instrument;
+          editTarget.track.label = preset.label;
+          editTarget.nameEl.textContent = preset.label;
+          editTarget.nameEl.title = preset.label;
+        } else {
+          const track = this.seq.addTrack(preset.instrument, preset.label);
+          this._renderTrack(track);
+        }
+        closeDialog();
       });
       list.appendChild(btn);
     });
 
-    document.getElementById('dialog-cancel').addEventListener('click', () => dialog.close());
-    dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
+    document.getElementById('dialog-cancel').addEventListener('click', closeDialog);
+    dialog.addEventListener('click', e => { if (e.target === dialog) closeDialog(); });
   }
+}
+
+// ─── MIDI ────────────────────────────────────────────────────────────────────
+
+const DRUM_NOTE = {
+  kick: 36, snare: 38, hihat_c: 42, hihat_o: 46,
+  clap: 39, tom_hi: 50, tom_lo: 45, rimshot: 37, cowbell: 56,
+};
+const NOTE_TO_INSTRUMENT = Object.fromEntries(
+  Object.entries(DRUM_NOTE).map(([k, v]) => [v, k])
+);
+// Extra GM aliases → our instruments
+Object.assign(NOTE_TO_INSTRUMENT, {
+  35: 'kick', 40: 'snare', 44: 'hihat_c', 48: 'tom_hi',
+  41: 'tom_lo', 43: 'tom_lo', 47: 'tom_lo',
+});
+
+function vlq(value) {
+  const bytes = [];
+  bytes.unshift(value & 0x7F);
+  value >>= 7;
+  while (value > 0) { bytes.unshift((value & 0x7F) | 0x80); value >>= 7; }
+  return bytes;
+}
+
+function exportMidi(seq) {
+  const PPQ = 96;
+  const ticksPerStep = PPQ / 4; // 16th note = 24 ticks
+  const uspb = Math.round(60_000_000 / seq.bpm);
+
+  const events = [];
+  for (const track of seq.tracks) {
+    const note = DRUM_NOTE[track.instrument];
+    if (!note) continue;
+    for (let s = 0; s < seq.totalSteps; s++) {
+      const vel = track.steps[s];
+      if (!vel) continue;
+      const midiVel = vel === 1 ? 55 : vel === 2 ? 82 : 110;
+      const tick = s * ticksPerStep;
+      events.push({ tick, status: 0x99, note, vel: midiVel });
+      events.push({ tick: tick + ticksPerStep - 1, status: 0x89, note, vel: 0 });
+    }
+  }
+  events.sort((a, b) => a.tick - b.tick || (a.status & 0xF0) - (b.status & 0xF0));
+
+  const trk = [];
+  // Tempo
+  trk.push(0x00, 0xFF, 0x51, 0x03,
+    (uspb >> 16) & 0xFF, (uspb >> 8) & 0xFF, uspb & 0xFF);
+  let cur = 0;
+  for (const e of events) {
+    trk.push(...vlq(e.tick - cur));
+    cur = e.tick;
+    trk.push(e.status, e.note, e.vel);
+  }
+  // Loop back marker (one full measure)
+  const loopTick = seq.totalSteps * ticksPerStep;
+  trk.push(...vlq(loopTick - cur), 0xFF, 0x2F, 0x00);
+
+  const bytes = [
+    0x4D,0x54,0x68,0x64, 0,0,0,6, 0,0, 0,1,
+    (PPQ >> 8) & 0xFF, PPQ & 0xFF,
+    0x4D,0x54,0x72,0x6B,
+    (trk.length >> 24)&0xFF, (trk.length >> 16)&0xFF,
+    (trk.length >> 8)&0xFF, trk.length & 0xFF,
+    ...trk,
+  ];
+  return new Uint8Array(bytes);
+}
+
+function importMidi(buffer) {
+  const dv = new DataView(buffer);
+  let p = 0;
+  const u32 = () => { const v = dv.getUint32(p); p += 4; return v; };
+  const u16 = () => { const v = dv.getUint16(p); p += 2; return v; };
+  const u8  = () => dv.getUint8(p++);
+  const readVlq = () => {
+    let v = 0, b;
+    do { b = u8(); v = (v << 7) | (b & 0x7F); } while (b & 0x80);
+    return v;
+  };
+
+  if (u32() !== 0x4D546864) throw new Error('Not a MIDI file');
+  u32(); // header length (6)
+  u16(); // format
+  const nTracks = u16();
+  const ppq = u16();
+  if (ppq & 0x8000) throw new Error('SMPTE not supported');
+
+  const hits  = {}; // instrument → { step → velLevel }
+  let maxTick = 0;
+
+  for (let t = 0; t < nTracks; t++) {
+    if (u32() !== 0x4D54726B) throw new Error('Bad track');
+    const trkLen = u32();
+    const trkEnd = p + trkLen;
+    let tick = 0, rs = 0;
+
+    while (p < trkEnd) {
+      tick += readVlq();
+      let sb = dv.getUint8(p);
+      if (sb & 0x80) { rs = sb; p++; } else { sb = rs; }
+
+      const type = sb & 0xF0, ch = sb & 0x0F;
+      if (sb === 0xFF) {
+        u8(); p += readVlq(); // meta: skip
+      } else if (sb === 0xF0 || sb === 0xF7) {
+        p += readVlq(); // sysex: skip
+      } else {
+        switch (type) {
+          case 0x90: {
+            const note = u8(), vel = u8();
+            if (ch === 9 && vel > 0) {
+              const inst = NOTE_TO_INSTRUMENT[note];
+              if (inst) {
+                const step = Math.round(tick / (ppq / 4));
+                const lv = vel > 100 ? 3 : vel > 64 ? 2 : 1;
+                if (!hits[inst]) hits[inst] = {};
+                if (!hits[inst][step]) hits[inst][step] = lv;
+                maxTick = Math.max(maxTick, tick);
+              }
+            }
+            break;
+          }
+          case 0x80: case 0xA0: case 0xB0: case 0xE0: p += 2; break;
+          case 0xC0: case 0xD0: p += 1; break;
+          default: p = trkEnd;
+        }
+      }
+    }
+    p = trkEnd;
+  }
+
+  const stepsDetected = Math.ceil((maxTick / ppq) * 4); // convert to 16th note steps
+  const totalSteps = stepsDetected <= 8 ? 8 : stepsDetected <= 16 ? 16 : 32;
+  return { hits, totalSteps };
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -567,4 +748,53 @@ document.addEventListener('DOMContentLoaded', () => {
   const ui = new UI(seq);
   ui.init();
   ui._initDefaultKit();
+
+  // MIDI export
+  document.getElementById('midi-export').addEventListener('click', () => {
+    const bytes = exportMidi(seq);
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/midi' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'beat.mid'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+
+  // MIDI import
+  document.getElementById('midi-import').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      try {
+        const { hits, totalSteps } = importMidi(evt.target.result);
+
+        // Clear existing tracks and grid
+        for (const track of [...seq.tracks]) seq.removeTrack(track.id);
+        seq.totalSteps = totalSteps;
+        ui._initSequencerDOM();
+
+        // Rebuild the steps selector to match
+        const stepsEl = document.getElementById('steps');
+        if ([8, 16, 32].includes(totalSteps)) stepsEl.value = totalSteps;
+
+        // Add a track for each instrument found
+        const LABEL = {
+          kick: '808 Kick', snare: '808 Snare', hihat_c: 'Closed Hat',
+          hihat_o: 'Open Hat', clap: '808 Clap', tom_hi: 'High Tom',
+          tom_lo: 'Low Tom', rimshot: 'Rimshot', cowbell: 'Cowbell',
+        };
+        for (const [inst, stepMap] of Object.entries(hits)) {
+          audio.init(); // ensure ctx exists
+          const track = seq.addTrack(inst, LABEL[inst] || inst);
+          for (const [step, lv] of Object.entries(stepMap)) {
+            if (step < totalSteps) track.steps[step] = lv;
+          }
+          ui._renderTrack(track);
+        }
+      } catch (err) {
+        alert(`Could not read MIDI file: ${err.message}`);
+      }
+      e.target.value = ''; // allow re-importing the same file
+    };
+    reader.readAsArrayBuffer(file);
+  });
 });
