@@ -558,7 +558,7 @@ class UI {
     if (p) { if (p._outside) document.removeEventListener('pointerdown', p._outside); p.remove(); }
   }
 
-
+  _rebuildGrids() {
     document.querySelectorAll('.step-row').forEach(r => r.remove());
 
     const container = document.getElementById('track-list');
