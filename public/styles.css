@@ -411,6 +411,15 @@ select:focus { outline: 1px solid var(--accent2); }
   min-height: 44px;
 }
 
+.phrase-ctrl-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  margin-right: 4px;
+}
+
 .melody-empty {
   color: var(--text-dim);
   font-size: 10px;
@@ -571,6 +580,13 @@ select:focus { outline: 1px solid var(--accent2); }
   color: var(--text);
 }
 
+/* Phrase boundary: stronger separator and accent color */
+.pr-header-cell.phrase-start {
+  border-left: 2px solid var(--accent2-dim);
+  color: var(--accent2);
+  font-weight: bold;
+}
+
 .pr-header-cell.playhead {
   color: var(--accent2);
 }
@@ -622,6 +638,10 @@ select:focus { outline: 1px solid var(--accent2); }
 
 .pr-bg-cell.beat-start {
   border-left: 1px solid rgba(255,255,255,0.06);
+}
+
+.pr-bg-cell.phrase-start {
+  border-left: 2px solid rgba(74,143,232,0.25);
 }
 
 .pr-bg-cell:hover {

@@ -281,18 +281,21 @@ class Sequencer {
     this.swing = 0;
     this.beatsPerMeasure = 4;
     this.totalSteps = 16;
+    this.melodyPhrases = 1; // melody loop = totalSteps * melodyPhrases
     this.tracks = [];
     this.isPlaying = false;
-    this.currentStep = 0;
+    this.currentStep = 0;  // global counter: 0..melodyTotalSteps-1
     this.nextStepTime = 0;
     this._worker = null;
     this.onStepChange = null;
   }
 
+  get melodyTotalSteps() { return this.totalSteps * this.melodyPhrases; }
+
   getStepDuration() { return (60 / this.bpm) / 4; }
 
-  getSwingOffset(stepIndex) {
-    if (stepIndex % 2 === 1) return this.swing * (this.getStepDuration() / 2);
+  getSwingOffset(beatStep) {
+    if (beatStep % 2 === 1) return this.swing * (this.getStepDuration() / 2);
     return 0;
   }
 
@@ -331,7 +334,17 @@ class Sequencer {
         next.set(track.steps.slice(0, n));
         track.steps = next;
       } else {
-        track.notes = (track.notes || []).filter(note => note.step < n);
+        track.notes = (track.notes || []).filter(note => note.step < this.melodyTotalSteps);
+      }
+    }
+  }
+
+  setMelodyPhrases(n) {
+    this.melodyPhrases = n;
+    const mt = this.melodyTotalSteps;
+    for (const track of this.tracks) {
+      if (track.type === 'melody') {
+        track.notes = (track.notes || []).filter(note => note.step < mt);
       }
     }
   }
@@ -371,12 +384,13 @@ class Sequencer {
     while (this.nextStepTime < lookahead) {
       this._scheduleStep(this.currentStep, this.nextStepTime);
       this.nextStepTime += this.getStepDuration();
-      this.currentStep = (this.currentStep + 1) % this.totalSteps;
+      this.currentStep = (this.currentStep + 1) % this.melodyTotalSteps;
     }
   }
 
   _scheduleStep(stepIndex, time) {
-    const scheduledTime = time + this.getSwingOffset(stepIndex);
+    const beatStep = stepIndex % this.totalSteps;
+    const scheduledTime = time + this.getSwingOffset(beatStep);
     const stepDuration = this.getStepDuration();
     for (const track of this.tracks) {
       if (track.muted) continue;
@@ -388,12 +402,12 @@ class Sequencer {
               noteName = midiToNote(Math.max(0, Math.min(127,
                 noteToMidi(noteName) + track.octaveShift * 12)));
             }
-            const noteDur = stepDuration * (n.dur || 1) * 0.92;
-            this.tone.trigger(track.id, noteName, scheduledTime, n.vel, noteDur);
+            this.tone.trigger(track.id, noteName, scheduledTime,
+              n.vel, stepDuration * (n.dur || 1) * 0.92);
           }
         }
       } else {
-        const vel = track.steps[stepIndex];
+        const vel = track.steps[beatStep];
         if (vel > 0) this.audio.trigger(track.instrument, scheduledTime, vel, track.id);
       }
     }
@@ -422,6 +436,8 @@ const NOTE_LENGTHS = [
 
 const OCTAVE_SHIFTS = [-2, -1, 0, 1, 2];
 const _fmtOct = o => o > 0 ? `+${o}` : `${o}`;
+
+const MELODY_PHRASE_OPTIONS = [1, 2, 4, 6, 8];
 
 const DRUM_PRESETS = [
   { instrument: 'kick',    label: '808 Kick'   },
@@ -477,8 +493,8 @@ class UI {
     document.getElementById('melody-view').classList.toggle('view-hidden', view !== 'melody');
     document.querySelectorAll('.view-tab').forEach(t =>
       t.classList.toggle('active', t.dataset.view === view));
-    const addBtn = document.getElementById('add-track');
-    addBtn.textContent = view === 'melody' ? '+ ADD SYNTH' : '+ ADD DRUM';
+    document.getElementById('add-track').textContent =
+      view === 'melody' ? '+ ADD SYNTH' : '+ ADD DRUM';
 
     if (view === 'melody' && !this._prBuilt) {
       this._buildPianoRoll();
@@ -646,11 +662,11 @@ class UI {
     [{ v: 1, label: 'LOW' }, { v: 2, label: 'MID' }, { v: 3, label: 'HIGH' }].forEach(({ v, label }) => {
       const btn = document.createElement('button');
       btn.className = `vel-opt vel-opt-${v}`;
-      if (track.steps[stepIdx] === v) btn.classList.add('active');
+      if (track.steps && track.steps[stepIdx] === v) btn.classList.add('active');
       btn.textContent = label;
       btn.addEventListener('pointerdown', e => {
         e.stopPropagation();
-        track.steps[stepIdx] = v;
+        if (track.steps) track.steps[stepIdx] = v;
         if (onSet) onSet(v); else cell.className = `step-cell vel-${v}`;
         this._closeVelPicker();
       });
@@ -696,6 +712,26 @@ class UI {
   _buildTracksBar() {
     const bar = document.getElementById('melody-tracks-bar');
     bar.innerHTML = '';
+
+    // Phrase-length control
+    const phraseWrap = document.createElement('div');
+    phraseWrap.className = 'phrase-ctrl-wrap';
+    const phraseLabel = document.createElement('span');
+    phraseLabel.className = 'transport-label';
+    phraseLabel.textContent = 'LOOP';
+    const phraseBtn = document.createElement('button');
+    phraseBtn.className = 'mel-chip-ctrl';
+    phraseBtn.title = 'Melody phrases (tap to cycle: 1×, 2×, 4×, 6×, 8×)';
+    phraseBtn.textContent = `${this.seq.melodyPhrases}×`;
+    phraseBtn.addEventListener('click', () => {
+      const idx = MELODY_PHRASE_OPTIONS.indexOf(this.seq.melodyPhrases);
+      this.seq.setMelodyPhrases(MELODY_PHRASE_OPTIONS[(idx + 1) % MELODY_PHRASE_OPTIONS.length]);
+      phraseBtn.textContent = `${this.seq.melodyPhrases}×`;
+      if (this._prBuilt) this._buildPianoRoll();
+    });
+    phraseWrap.appendChild(phraseLabel);
+    phraseWrap.appendChild(phraseBtn);
+    bar.appendChild(phraseWrap);
 
     const melTracks = this.seq.tracks.filter(t => t.type === 'melody');
     if (melTracks.length === 0) {
@@ -745,7 +781,7 @@ class UI {
 
       const lenBtn = document.createElement('button');
       lenBtn.className = 'mel-chip-ctrl';
-      lenBtn.title = 'Note length (tap to cycle)';
+      lenBtn.title = 'Default note length (tap to cycle)';
       lenBtn.textContent = NOTE_LENGTHS.find(nl => nl.mult === (track.noteLength || 1))?.label ?? '1';
       lenBtn.addEventListener('click', e => {
         e.stopPropagation();
@@ -813,9 +849,10 @@ class UI {
   _buildPianoRoll() {
     const container = document.getElementById('piano-roll');
     container.innerHTML = '';
-    const N = this.seq.totalSteps;
+    const N = this.seq.melodyTotalSteps;
+    const beatSteps = this.seq.totalSteps;
 
-    // Sticky header: step numbers (flex layout)
+    // Sticky header with phrase-aware beat labels
     const headerRow = document.createElement('div');
     headerRow.id = 'pr-header-row';
     headerRow.className = 'pr-row pr-header-row';
@@ -824,9 +861,16 @@ class UI {
     headerRow.appendChild(corner);
     for (let s = 0; s < N; s++) {
       const cell = document.createElement('div');
-      cell.className = 'pr-header-cell' + (s % 4 === 0 ? ' beat-start' : '');
+      const isPhraseStart = s % beatSteps === 0 && s > 0;
+      const isBeatStart = s % 4 === 0;
+      cell.className = 'pr-header-cell' +
+        (isPhraseStart ? ' phrase-start' : isBeatStart ? ' beat-start' : '');
       cell.dataset.step = s;
-      cell.textContent = s % 4 === 0 ? Math.floor(s / 4) + 1 : '';
+      if (isPhraseStart) {
+        cell.textContent = `P${s / beatSteps + 1}`;
+      } else if (isBeatStart) {
+        cell.textContent = Math.floor((s % beatSteps) / 4) + 1;
+      }
       headerRow.appendChild(cell);
     }
     container.appendChild(headerRow);
@@ -839,7 +883,7 @@ class UI {
   }
 
   _makePRRow(note, N) {
-    if (N === undefined) N = this.seq.totalSteps;
+    if (N === undefined) N = this.seq.melodyTotalSteps;
     const isSharp = note.includes('#');
     const isC = note.startsWith('C') && !isSharp;
     const row = document.createElement('div');
@@ -852,63 +896,122 @@ class UI {
     else if (!isSharp) label.textContent = note[0];
     row.appendChild(label);
 
-    // Cells area: position:relative container for bg-cells and note blocks
     const area = document.createElement('div');
     area.className = 'pr-cells-area';
     area.dataset.note = note;
     area.style.minWidth = `${N * 18}px`;
 
+    // Beat/phrase markers as bg-cells
     for (let s = 0; s < N; s++) {
       const bgCell = document.createElement('div');
-      bgCell.className = 'pr-bg-cell' + (s % 4 === 0 ? ' beat-start' : '');
+      const isPhraseStart = s % this.seq.totalSteps === 0 && s > 0;
+      const isBeatStart = s % 4 === 0;
+      bgCell.className = 'pr-bg-cell' +
+        (isPhraseStart ? ' phrase-start' : isBeatStart ? ' beat-start' : '');
       bgCell.style.left = `${(s / N) * 100}%`;
       bgCell.style.width = `${(1 / N) * 100}%`;
       bgCell.dataset.step = s;
-      bgCell.dataset.note = note;
-      bgCell.addEventListener('pointerdown', e => {
-        e.preventDefault();
-        this._handleBgCellTap(note, s);
-      });
       area.appendChild(bgCell);
     }
+
+    // Draw gesture: swipe to create a note spanning from start to end of drag
+    this._bindAreaDraw(area, note, N);
 
     row.appendChild(area);
     return row;
   }
 
-  _handleBgCellTap(rowNote, stepIdx) {
-    const track = this._getSelectedMelodyTrack();
-    if (!track) return;
-    const N = this.seq.totalSteps;
+  _bindAreaDraw(area, rowNote, N) {
+    area.addEventListener('pointerdown', e => {
+      // If pointer landed on a note block or handle, let those handlers take it
+      if (e.target.closest('.pr-note-handle') || e.target.closest('.pr-note-block')) return;
 
-    const existing = track.notes.find(n => n.step === stepIdx);
-    if (existing) {
-      if (existing.note === rowNote) {
-        // Same pitch: remove
-        track.notes = track.notes.filter(n => n !== existing);
-        document.querySelectorAll(
-          `.pr-note-block[data-track-id="${track.id}"][data-step="${stepIdx}"]`
-        ).forEach(el => el.remove());
-      } else {
-        // Different pitch: relocate to new row
-        document.querySelectorAll(
-          `.pr-note-block[data-track-id="${track.id}"][data-step="${stepIdx}"]`
-        ).forEach(el => el.remove());
-        existing.note = rowNote;
-        const color = TRACK_COLORS[track.colorIdx % TRACK_COLORS.length];
-        this._renderNoteBlock(track, existing, color, N);
-      }
-    } else {
-      const noteObj = { step: stepIdx, note: rowNote, vel: 3, dur: track.noteLength || 1 };
-      track.notes.push(noteObj);
+      const track = this._getSelectedMelodyTrack();
+      if (!track) return;
+
+      const rect = area.getBoundingClientRect();
+      const startClientX = e.clientX;
+      const startClientY = e.clientY;
+      const startStep = Math.max(0, Math.min(N - 1,
+        Math.floor((startClientX - rect.left) / rect.width * N)));
+
+      // If an existing note from this track already covers startStep+pitch, abort
+      if (track.notes.some(n =>
+        n.note === rowNote && startStep >= n.step && startStep < n.step + (n.dur || 1)
+      )) return;
+
       const color = TRACK_COLORS[track.colorIdx % TRACK_COLORS.length];
-      this._renderNoteBlock(track, noteObj, color, N);
-    }
+      let drawMode = false;
+      let noteObj = null;
+      let block = null;
+
+      const commit = (endClientX, endClientY) => {
+        const dx = Math.abs(endClientX - startClientX);
+        const dy = Math.abs(endClientY - startClientY);
+        if (!drawMode && dx < 8 && dy < 8) {
+          // Quick tap: place single note with default length
+          noteObj = { step: startStep, note: rowNote, vel: 3, dur: track.noteLength || 1 };
+          track.notes.push(noteObj);
+          this._renderNoteBlock(track, noteObj, color, N);
+        }
+        // If drawMode, note is already committed (created on first significant move)
+      };
+
+      const onMove = e => {
+        const dx = e.clientX - startClientX;
+        const dy = e.clientY - startClientY;
+
+        if (!drawMode) {
+          if (Math.abs(dx) > 6) {
+            // Start draw mode: create note and capture pointer
+            drawMode = true;
+            area.setPointerCapture(e.pointerId);
+            noteObj = { step: startStep, note: rowNote, vel: 3, dur: 1 };
+            track.notes.push(noteObj);
+            block = this._renderNoteBlock(track, noteObj, color, N);
+          } else if (Math.abs(dy) > 6) {
+            // Vertical scroll intent: abort draw
+            cleanup();
+          }
+          return;
+        }
+
+        // Extend note width as finger moves right
+        const curRect = area.getBoundingClientRect();
+        const curStep = Math.max(0, Math.min(N - 1,
+          Math.floor((e.clientX - curRect.left) / curRect.width * N)));
+
+        if (curStep >= startStep) {
+          // Don't extend into the next existing note from this track at same pitch
+          const nextNote = track.notes
+            .filter(n => n !== noteObj && n.note === rowNote && n.step > startStep)
+            .sort((a, b) => a.step - b.step)[0];
+          const maxDur = nextNote ? nextNote.step - startStep : N - startStep;
+          noteObj.dur = Math.max(1, Math.min(maxDur, curStep - startStep + 1));
+          if (block) block.style.width = `${(noteObj.dur / N) * 100}%`;
+        }
+      };
+
+      const onUp = e => {
+        commit(e.clientX, e.clientY);
+        cleanup();
+      };
+
+      const cleanup = () => {
+        area.removeEventListener('pointermove', onMove);
+        area.removeEventListener('pointerup', onUp);
+        area.removeEventListener('pointercancel', cleanup);
+      };
+
+      area.addEventListener('pointermove', onMove);
+      area.addEventListener('pointerup', onUp);
+      area.addEventListener('pointercancel', cleanup);
+    });
   }
 
   _refreshPRNotes() {
     document.querySelectorAll('.pr-note-block').forEach(el => el.remove());
-    const N = this.seq.totalSteps;
+    const N = this.seq.melodyTotalSteps;
     for (const track of this.seq.tracks) {
       if (track.type !== 'melody') continue;
       const color = TRACK_COLORS[track.colorIdx % TRACK_COLORS.length];
@@ -919,7 +1022,13 @@ class UI {
   }
 
   _renderNoteBlock(track, noteObj, color, N) {
-    const area = document.querySelector(`.pr-cells-area[data-note="${noteObj.note}"]`);
+    if (!color) color = TRACK_COLORS[track.colorIdx % TRACK_COLORS.length];
+    if (!N) N = this.seq.melodyTotalSteps;
+
+    const getArea = () =>
+      document.querySelector(`.pr-cells-area[data-note="${noteObj.note}"]`);
+
+    const area = getArea();
     if (!area) return null;
 
     const alpha = noteObj.vel === 1 ? 0.45 : noteObj.vel === 2 ? 0.72 : 1.0;
@@ -938,47 +1047,28 @@ class UI {
     block.appendChild(lHandle);
     block.appendChild(rHandle);
 
-    // Tap body = edit popup
-    let tapTimer = null, tapStartX, tapStartY;
-    block.addEventListener('pointerdown', e => {
-      if (e.target.closest('.pr-note-handle')) return;
-      e.stopPropagation();
-      tapStartX = e.clientX; tapStartY = e.clientY;
-      tapTimer = setTimeout(() => { tapTimer = null; }, 350);
-    });
-    block.addEventListener('pointermove', e => {
-      if (tapTimer && (Math.abs(e.clientX - tapStartX) > 8 || Math.abs(e.clientY - tapStartY) > 8)) {
-        clearTimeout(tapTimer); tapTimer = null;
-      }
-    });
-    block.addEventListener('pointerup', e => {
-      if (e.target.closest('.pr-note-handle')) return;
-      if (tapTimer) {
-        clearTimeout(tapTimer); tapTimer = null;
-        this._showNoteEditPopup(block, track, noteObj, color, N);
-      }
-    });
-    block.addEventListener('pointercancel', () => { clearTimeout(tapTimer); tapTimer = null; });
+    // Handles: left = resize from left edge, right = resize from right edge
+    this._bindHandleDrag(lHandle, 'left',  block, track, noteObj, getArea, N);
+    this._bindHandleDrag(rHandle, 'right', block, track, noteObj, getArea, N);
 
-    // Left handle: move note
-    this._bindHandleDrag(lHandle, 'move', block, track, noteObj, area, N);
-    // Right handle: resize duration
-    this._bindHandleDrag(rHandle, 'resize', block, track, noteObj, area, N);
+    // Center: short tap → edit popup; drag → move (step + pitch)
+    this._bindNoteBodyInteraction(block, track, noteObj, color, getArea, N);
 
     area.appendChild(block);
     return block;
   }
 
-  _bindHandleDrag(handle, mode, block, track, noteObj, area, N) {
-    let startX, startVal, areaW;
+  _bindHandleDrag(handle, side, block, track, noteObj, getArea, N) {
+    let startX, startStep, startDur, areaW;
 
     handle.addEventListener('pointerdown', e => {
       e.preventDefault();
       e.stopPropagation();
       handle.setPointerCapture(e.pointerId);
-      startX = e.clientX;
-      startVal = mode === 'move' ? noteObj.step : (noteObj.dur || 1);
-      areaW = area.getBoundingClientRect().width;
+      startX    = e.clientX;
+      startStep = noteObj.step;
+      startDur  = noteObj.dur || 1;
+      areaW = getArea()?.getBoundingClientRect().width || 400;
     });
 
     handle.addEventListener('pointermove', e => {
@@ -986,23 +1076,104 @@ class UI {
       const stepW = areaW / N;
       const dx = e.clientX - startX;
 
-      if (mode === 'move') {
-        const newStep = Math.max(0, Math.min(N - 1, Math.round(startVal + dx / stepW)));
-        if (newStep !== noteObj.step) {
-          const conflict = track.notes.some(
-            n => n !== noteObj && n.step === newStep && n.note === noteObj.note
-          );
-          if (!conflict) {
-            noteObj.step = newStep;
-            block.dataset.step = newStep;
-            block.style.left = `${(newStep / N) * 100}%`;
-          }
-        }
+      if (side === 'left') {
+        // Move start point, keep end point fixed
+        const endStep = startStep + startDur;
+        const raw = startStep + dx / stepW;
+        const newStart = Math.max(0, Math.min(endStep - 0.25,
+          Math.round(raw * 4) / 4));
+        noteObj.step = newStart;
+        noteObj.dur  = endStep - newStart;
+        block.dataset.step = Math.round(newStart);
+        block.style.left  = `${(newStart / N) * 100}%`;
+        block.style.width = `${(noteObj.dur / N) * 100}%`;
       } else {
-        const newDur = Math.max(0.25, Math.round((startVal + dx / stepW) * 4) / 4);
+        // Extend/shrink from right: keep start, change duration
+        const newDur = Math.max(0.25, Math.round((startDur + dx / stepW) * 4) / 4);
         noteObj.dur = newDur;
         block.style.width = `${(newDur / N) * 100}%`;
       }
+    });
+  }
+
+  _bindNoteBodyInteraction(block, track, noteObj, color, getArea, N) {
+    let startX, startY, isDragging, tapTimer;
+    let dragStartStep, dragStepW;
+
+    block.addEventListener('pointerdown', e => {
+      if (e.target.closest('.pr-note-handle')) return;
+      e.stopPropagation();
+      e.preventDefault();
+      block.setPointerCapture(e.pointerId);
+      startX = e.clientX; startY = e.clientY;
+      isDragging = false;
+      tapTimer = setTimeout(() => { tapTimer = null; }, 350);
+    });
+
+    block.addEventListener('pointermove', e => {
+      if (!block.hasPointerCapture(e.pointerId)) return;
+      if (e.target.closest('.pr-note-handle')) return;
+
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      if (!isDragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        isDragging = true;
+        clearTimeout(tapTimer); tapTimer = null;
+        dragStartStep = noteObj.step;
+        dragStepW = (getArea()?.getBoundingClientRect().width || 400) / N;
+      }
+
+      if (!isDragging) return;
+
+      // X → step position (snap to steps)
+      const stepDelta = Math.round((e.clientX - startX) / dragStepW);
+      const newStep = Math.max(0, Math.min(N - 1, dragStartStep + stepDelta));
+
+      // Y → pitch (find which piano roll row the pointer is over)
+      let newNote = noteObj.note;
+      const noteRows = document.querySelectorAll('.pr-row[data-note]');
+      for (const row of noteRows) {
+        const rect = row.getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY < rect.bottom) {
+          newNote = row.dataset.note;
+          break;
+        }
+      }
+
+      const stepChanged = newStep !== noteObj.step;
+      const pitchChanged = newNote !== noteObj.note;
+
+      if (stepChanged || pitchChanged) {
+        const conflict = track.notes.some(n =>
+          n !== noteObj && n.step === newStep && n.note === newNote
+        );
+        if (!conflict) {
+          noteObj.step = newStep;
+          block.dataset.step = newStep;
+          block.style.left = `${(newStep / N) * 100}%`;
+
+          if (pitchChanged) {
+            noteObj.note = newNote;
+            const newArea = document.querySelector(`.pr-cells-area[data-note="${newNote}"]`);
+            if (newArea) newArea.appendChild(block);
+          }
+        }
+      }
+    });
+
+    block.addEventListener('pointerup', e => {
+      if (e.target.closest('.pr-note-handle')) return;
+      if (!isDragging && tapTimer) {
+        clearTimeout(tapTimer); tapTimer = null;
+        this._showNoteEditPopup(block, track, noteObj, color, N);
+      }
+      isDragging = false;
+    });
+
+    block.addEventListener('pointercancel', () => {
+      clearTimeout(tapTimer); tapTimer = null;
+      isDragging = false;
     });
   }
 
@@ -1059,12 +1230,15 @@ class UI {
 
   // ── Playhead ────────────────────────────────────────────────────────────────
   _updatePlayhead(step) {
+    const beatStep = step % this.seq.totalSteps;
+    const prevBeatStep = this.activeStep >= 0 ? this.activeStep % this.seq.totalSteps : -1;
+
     if (this.activeStep >= 0) {
-      document.querySelector(`.step-row[data-step="${this.activeStep}"]`)?.classList.remove('active');
+      document.querySelector(`.step-row[data-step="${prevBeatStep}"]`)?.classList.remove('active');
       document.querySelector(`.pr-header-cell[data-step="${this.activeStep}"]`)?.classList.remove('playhead');
       document.querySelectorAll(`.pr-bg-cell[data-step="${this.activeStep}"]`).forEach(el => el.classList.remove('col-active'));
     }
-    document.querySelector(`.step-row[data-step="${step}"]`)?.classList.add('active');
+    document.querySelector(`.step-row[data-step="${beatStep}"]`)?.classList.add('active');
     document.querySelector(`.pr-header-cell[data-step="${step}"]`)?.classList.add('playhead');
     document.querySelectorAll(`.pr-bg-cell[data-step="${step}"]`).forEach(el => el.classList.add('col-active'));
     this.activeStep = step;
@@ -1079,7 +1253,8 @@ class UI {
         playBtn.textContent = '▶ PLAY';
         playBtn.classList.remove('playing');
         if (this.activeStep >= 0) {
-          document.querySelector(`.step-row[data-step="${this.activeStep}"]`)?.classList.remove('active');
+          const beatStep = this.activeStep % this.seq.totalSteps;
+          document.querySelector(`.step-row[data-step="${beatStep}"]`)?.classList.remove('active');
           document.querySelector(`.pr-header-cell[data-step="${this.activeStep}"]`)?.classList.remove('playhead');
           document.querySelectorAll(`.pr-bg-cell[data-step="${this.activeStep}"]`).forEach(el => el.classList.remove('col-active'));
           this.activeStep = -1;
@@ -1255,7 +1430,7 @@ function exportMidi(seq) {
     trk.push(...vlq(e.tick - cur)); cur = e.tick;
     trk.push(e.status, e.note, e.vel);
   }
-  const loopTick = seq.totalSteps * ticksPerStep;
+  const loopTick = seq.melodyTotalSteps * ticksPerStep;
   trk.push(...vlq(loopTick - cur), 0xFF, 0x2F, 0x00);
 
   return new Uint8Array([
@@ -1290,10 +1465,8 @@ function importMidi(buffer) {
   if (ppq & 0x8000) throw new Error('SMPTE timecode not supported');
 
   const drumHits = {};
-  // melHits[ch] = [{step, note, vel, dur}]
-  const melHits = {};
-  // pending note-ons: pending[ch][midiNote] = {step, vel, startTick}
-  const pending = {};
+  const melHits = {};   // ch → [{step, note, vel, dur}]
+  const pending = {};   // ch → {midiNote: {step, vel, startTick}}
   let maxTick = 0;
 
   for (let t = 0; t < nTracks; t++) {
@@ -1337,8 +1510,8 @@ function importMidi(buffer) {
               }
               maxTick = Math.max(maxTick, tick);
             } else {
-              // vel=0 = note-off
-              if (ch !== 9 && pending[ch] && pending[ch][note]) {
+              // vel=0 treated as note-off
+              if (ch !== 9 && pending[ch]?.[note]) {
                 const { step, vel: lv, startTick } = pending[ch][note];
                 const dur = Math.max(0.25, Math.round(((tick - startTick) / (ppq / 4)) * 4) / 4);
                 if (!melHits[ch]) melHits[ch] = [];
@@ -1350,8 +1523,8 @@ function importMidi(buffer) {
           }
           case 0x80: {
             if (p + 1 >= trkEnd) { p = trkEnd; break; }
-            const note = u8(); u8(); // note-off velocity ignored
-            if (ch !== 9 && pending[ch] && pending[ch][note]) {
+            const note = u8(); u8();
+            if (ch !== 9 && pending[ch]?.[note]) {
               const { step, vel: lv, startTick } = pending[ch][note];
               const dur = Math.max(0.25, Math.round(((tick - startTick) / (ppq / 4)) * 4) / 4);
               if (!melHits[ch]) melHits[ch] = [];
@@ -1407,6 +1580,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (const track of [...seq.tracks]) seq.removeTrack(track.id);
         seq.totalSteps = totalSteps;
+        seq.melodyPhrases = 1;
         ui._initBeatDOM();
 
         const stepsEl = document.getElementById('steps');
@@ -1435,7 +1609,7 @@ document.addEventListener('DOMContentLoaded', () => {
           track.colorIdx = colorIdx;
           for (const { step, note, vel, dur } of noteArr) {
             const s = parseInt(step);
-            if (s < totalSteps) track.notes.push({ step: s, note, vel, dur: dur || 1 });
+            if (s < seq.melodyTotalSteps) track.notes.push({ step: s, note, vel, dur: dur || 1 });
           }
         }
 
