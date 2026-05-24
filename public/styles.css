@@ -605,6 +605,94 @@ select:focus { outline: 1px solid var(--accent2); }
   pointer-events: none;
 }
 
+/* ── Piano roll cells area (absolute-positioned note blocks) ── */
+.pr-cells-area {
+  position: relative;
+  flex: 1 1 0;
+  overflow: visible;
+}
+
+.pr-bg-cell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pr-bg-cell.beat-start {
+  border-left: 1px solid rgba(255,255,255,0.06);
+}
+
+.pr-bg-cell:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.pr-bg-cell.col-active {
+  background: rgba(74,143,232,0.15);
+}
+
+.pr-note-block {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 3px;
+  z-index: 2;
+  cursor: pointer;
+  min-width: 6px;
+  touch-action: manipulation;
+}
+
+.pr-note-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  background: rgba(255,255,255,0.25);
+  cursor: col-resize;
+  z-index: 3;
+  touch-action: none;
+}
+
+.pr-note-handle-l {
+  left: 0;
+  border-radius: 3px 0 0 3px;
+}
+
+.pr-note-handle-r {
+  right: 0;
+  border-radius: 0 3px 3px 0;
+}
+
+.note-edit-popup {
+  position: fixed;
+  z-index: 200;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  gap: 3px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.65);
+  touch-action: none;
+}
+
+.note-delete-btn {
+  width: 46px;
+  height: 32px;
+  border-radius: 5px;
+  border: 1px solid #804040;
+  background: #302020;
+  color: #ff8080;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.note-delete-btn:hover { background: #502020; }
+
 /* ── Dialog ── */
 dialog {
   background: var(--surface2);
